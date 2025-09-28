@@ -121,11 +121,13 @@ public class LuceneService : IDisposable
 
     public List<Dictionary<string, string>> GetChildren(string parentId)
     {
-        using var reader = DirectoryReader.Open(_directory);
-        var searcher = new IndexSearcher(reader);
-        var query = new TermQuery(new Term("parent", parentId));
-        var hits = searcher.Search(query, 1000).ScoreDocs;
-        var result = new List<Dictionary<string, string>>();
+        try
+        {
+            using var reader = DirectoryReader.Open(_directory);
+            var searcher = new IndexSearcher(reader);
+            var query = new TermQuery(new Term("parent", parentId));
+            var hits = searcher.Search(query, 1000).ScoreDocs;
+            var result = new List<Dictionary<string, string>>();
         foreach (var hit in hits)
         {
             var doc = searcher.Doc(hit.Doc);
@@ -137,6 +139,13 @@ public class LuceneService : IDisposable
             result.Add(dict);
         }
         return result;
+        }
+        catch (IndexNotFoundException)
+        {
+            // Index doesn't exist yet, return empty list
+            Console.WriteLine("Index not found, returning empty result");
+            return new List<Dictionary<string, string>>();
+        }
     }
 
     public void Dispose()

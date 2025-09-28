@@ -179,21 +179,22 @@ public class MusicController : ControllerBase
             }
             
             // Try to find the segment file in any of the matching directories
+            var fileName = Path.GetFileName(path);
             foreach (var cacheDir in possibleDirs)
             {
-                var segmentPath = Path.Combine(cacheDir, path);
+                var segmentPath = Path.Combine(cacheDir, fileName);
                 Console.WriteLine($"Checking segment path: {segmentPath}");
                 
                 if (System.IO.File.Exists(segmentPath))
                 {
                     Console.WriteLine($"Found segment file: {segmentPath}");
-                    var contentType = path.EndsWith(".ts") ? "video/MP2T" : "application/vnd.apple.mpegurl";
+                    var contentType = fileName.EndsWith(".ts") ? "video/MP2T" : "application/vnd.apple.mpegurl";
                     return PhysicalFile(segmentPath, contentType);
                 }
             }
             
-            Console.WriteLine($"Segment not found: {path} for id: {id}");
-            return NotFound($"Segment not found: {path}");
+            Console.WriteLine($"Segment not found: {fileName} for id: {id}");
+            return NotFound($"Segment not found: {fileName}");
         }
         catch (Exception ex)
         {
