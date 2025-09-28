@@ -38,13 +38,38 @@ public class LuceneService : IDisposable
         _analyzer = new StandardAnalyzer(_version);
         var config = new IndexWriterConfig(_version, _analyzer);
         _writer = new IndexWriter(_directory, config);
-    }    public void IndexDirectory(string dirPath, string? parentId = null)
+    }    public void ClearIndex()
+    {
+        _writer.DeleteAll();
+        _writer.Commit();
+        Console.WriteLine("Index cleared");
+    }
+
+    public void RemoveFromIndex(string path)
+    {
+        // パスに基づいてドキュメントを削除
+        var query = new TermQuery(new Term("path", path));
+        _writer.DeleteDocuments(query);
+        
+        // 該当パスで始まる子要素も削除（ディレクトリの場合）
+        if (Directory.Exists(path))
+        {
+            var prefixQuery = new PrefixQuery(new Term("path", path + Path.DirectorySeparatorChar));
+            _writer.DeleteDocuments(prefixQuery);
+        }
+        
+        _writer.Commit();
+        Console.WriteLine($"Removed from index: {path}");
+    }
+
+    public void IndexDirectory(string dirPath, string? parentId = null)
     {
         Console.WriteLine($"Indexing directory: {dirPath} with parentId: {parentId}");
         var currentId = parentId ?? "/";
         if (parentId == null)
         {
-            // root directory
+            // root directory - 完全再インデックスの場合のみクリア
+            ClearIndex();
             var doc = new Document
             {
                 new StringField("id", "/", Field.Store.YES),

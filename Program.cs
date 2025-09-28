@@ -10,6 +10,7 @@ builder.Services.AddControllers();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddSingleton<LuceneService>();
+builder.Services.AddSingleton<FileWatcherService>();
 builder.Services.AddSingleton<IHlsCacheStorage>(provider =>
 {
     var config = provider.GetRequiredService<IConfiguration>();
@@ -29,6 +30,7 @@ var app = builder.Build();
 
 // Initialize Lucene index
 var luceneService = app.Services.GetRequiredService<LuceneService>();
+var fileWatcherService = app.Services.GetRequiredService<FileWatcherService>();
 var hlsService = app.Services.GetRequiredService<HlsService>();
 
 _ = Task.Run(() =>
@@ -38,6 +40,9 @@ _ = Task.Run(() =>
         luceneService.IndexDirectory(musicDir);
     }
 });
+
+// Ensure FileWatcherService is initialized (it starts automatically in constructor)
+_ = fileWatcherService;
 
 app.MapControllers();
 

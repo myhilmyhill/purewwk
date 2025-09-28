@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using System.Collections.Generic;
 using System.Linq;
 using repos.Models;
@@ -12,11 +13,13 @@ public class MusicController : ControllerBase
 {
     private readonly LuceneService _luceneService;
     private readonly HlsService _hlsService;
+    private readonly IConfiguration _configuration;
 
-    public MusicController(LuceneService luceneService, HlsService hlsService)
+    public MusicController(LuceneService luceneService, HlsService hlsService, IConfiguration configuration)
     {
         _luceneService = luceneService;
         _hlsService = hlsService;
+        _configuration = configuration;
     }
 
     [HttpGet("getMusicDirectory.view")]
@@ -77,28 +80,61 @@ public class MusicController : ControllerBase
     [HttpGet("hls/{id}/{*path}")]
     public IActionResult GetHlsSegment(string id, string path)
     {
-        // Original ID might have been prefixed with /, so we need to check both variants
-        var segmentDir1 = Path.Combine(Path.GetTempPath(), "hls_segments", id.Replace("/", "_"));
-        var segmentDir2 = Path.Combine(Path.GetTempPath(), "hls_segments", ("/" + id).Replace("/", "_"));
-        
-        var segmentPath1 = Path.Combine(segmentDir1, path);
-        var segmentPath2 = Path.Combine(segmentDir2, path);
-        
-        string segmentPath;
-        if (System.IO.File.Exists(segmentPath1))
+        try
         {
-            segmentPath = segmentPath1;
-        }
-        else if (System.IO.File.Exists(segmentPath2))
-        {
-            segmentPath = segmentPath2;
-        }
-        else
-        {
+            Console.WriteLine($"Looking for HLS segment - ID: {id}, Path: {path}");
+            
+            // Use the same directory structure as HlsService
+            var workingDir = _configuration["WorkingDirectory"];
+            var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
+            
+            // The HlsService generates cache keys with bitrate info
+            // We need to find the correct cache directory by scanning for directories that start with the id
+            var hlsSegmentsDir = Path.Combine(baseDir, "hls_segments");
+            
+            if (!Directory.Exists(hlsSegmentsDir))
+            {
+                Console.WriteLine($"HLS segments directory not found: {hlsSegmentsDir}");
+                return NotFound($"HLS segments directory not found");
+            }
+            
+            // Look for cache directories that match this ID
+            var possibleDirs = Directory.GetDirectories(hlsSegmentsDir)
+                .Where(dir =>
+                {
+                    var dirName = Path.GetFileName(dir);
+                    var cleanId = id.TrimStart('/').Replace("/", "_").Replace("\\", "_");
+                    return dirName.StartsWith(cleanId + "_") || dirName == cleanId;
+                })
+                .ToList();
+            
+            Console.WriteLine($"Found {possibleDirs.Count} possible cache directories for id: {id}");
+            foreach (var dir in possibleDirs)
+            {
+                Console.WriteLine($"  - {Path.GetFileName(dir)}");
+            }
+            
+            // Try to find the segment file in any of the matching directories
+            foreach (var cacheDir in possibleDirs)
+            {
+                var segmentPath = Path.Combine(cacheDir, path);
+                Console.WriteLine($"Checking segment path: {segmentPath}");
+                
+                if (System.IO.File.Exists(segmentPath))
+                {
+                    Console.WriteLine($"Found segment file: {segmentPath}");
+                    var contentType = path.EndsWith(".ts") ? "video/MP2T" : "application/vnd.apple.mpegurl";
+                    return PhysicalFile(segmentPath, contentType);
+                }
+            }
+            
+            Console.WriteLine($"Segment not found: {path} for id: {id}");
             return NotFound($"Segment not found: {path}");
         }
-        
-        var contentType = path.EndsWith(".ts") ? "video/MP2T" : "application/vnd.apple.mpegurl";
-        return PhysicalFile(segmentPath, contentType);
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error serving HLS segment: {ex.Message}");
+            return StatusCode(500, $"Error serving segment: {ex.Message}");
+        }
     }
 }

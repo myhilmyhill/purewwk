@@ -135,7 +135,9 @@ public class HlsService
     {
         var bitRateStr = bitRates.Length > 0 ? string.Join(",", bitRates) : "default";
         var audioTrackStr = audioTrack ?? "default";
-        return $"{id}_{bitRateStr}_{audioTrackStr}".Replace("/", "_").Replace("\\", "_");
+        // Clean the ID consistently - remove leading slash and replace path separators
+        var cleanId = id.TrimStart('/').Replace("/", "_").Replace("\\", "_");
+        return $"{cleanId}_{bitRateStr}_{audioTrackStr}";
     }
 
     public async Task StartCacheCleanupAsync()
