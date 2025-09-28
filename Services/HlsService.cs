@@ -13,6 +13,8 @@ public class HlsService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IHlsCacheStorage _cacheStorage;
     private readonly bool _cacheEnabled;
+    private readonly bool _losslessEncodingEnabled;
+    private readonly string[] _losslessFormats;
 
     public HlsService(IConfiguration configuration, LuceneService luceneService, IHttpContextAccessor httpContextAccessor, IHlsCacheStorage cacheStorage)
     {
@@ -21,6 +23,9 @@ public class HlsService
         _httpContextAccessor = httpContextAccessor;
         _cacheStorage = cacheStorage;
         _cacheEnabled = configuration.GetValue<bool>("HlsCache:Enabled", true);
+        _losslessEncodingEnabled = configuration.GetValue<bool>("LosslessEncoding:Enabled", true);
+        _losslessFormats = configuration.GetSection("LosslessEncoding:LosslessFormats").Get<string[]>() 
+            ?? new[] { "flac", "wav", "ape", "wv", "alac", "aiff", "au" };
     }
 
     public async Task<string> GenerateHlsPlaylist(string id, int[] bitRates, string? audioTrack)
@@ -86,21 +91,29 @@ public class HlsService
         // Clean up the id to avoid double slashes
         var cleanId = id.TrimStart('/');
 
+        // Check if the file is lossless format and needs encoding first
+        string inputFileForHls = fullPath;
+        if (IsLosslessFormat(fullPath))
+        {
+            Console.WriteLine($"Detected lossless format file: {fullPath}");
+            inputFileForHls = await EncodeToLossyFormat(fullPath, cacheDir);
+        }
+
         // FFmpeg command for HLS - use first bitrate if provided, otherwise use default
         string ffmpegArgs;
         if (bitRates.Length > 0)
         {
             var bitRate = bitRates[0]; // Use only the first bitrate
-            ffmpegArgs = $"-y -v error -i \"{fullPath}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
             Console.WriteLine($"Using single bitrate: {bitRate}k");
         }
         else
         {
-            ffmpegArgs = $"-y -v error -i \"{fullPath}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
             Console.WriteLine("Using default bitrate");
         }
 
-        Console.WriteLine($"FFmpeg command: ffmpeg {ffmpegArgs}");
+        Console.WriteLine($"FFmpeg HLS command: ffmpeg {ffmpegArgs}");
 
         // Run FFmpeg
         await RunFfmpeg(ffmpegArgs);
@@ -161,6 +174,61 @@ public class HlsService
                 }
             }
         });
+    }
+
+    private bool IsLosslessFormat(string filePath)
+    {
+        if (!_losslessEncodingEnabled)
+            return false;
+            
+        var extension = Path.GetExtension(filePath)?.ToLowerInvariant()?.TrimStart('.');
+        return !string.IsNullOrEmpty(extension) && _losslessFormats.Contains(extension);
+    }
+
+    private async Task<string> EncodeToLossyFormat(string inputPath, string cacheDir)
+    {
+        var targetFormat = _configuration.GetValue<string>("LosslessEncoding:TargetFormat", "m4a");
+        var audioCodec = _configuration.GetValue<string>("LosslessEncoding:AudioCodec", "aac");
+        var audioBitrate = _configuration.GetValue<string>("LosslessEncoding:AudioBitrate", "320k");
+        var sampleRateConfig = _configuration.GetValue<string>("LosslessEncoding:AudioSampleRate");
+        
+        var encodedFileName = $"encoded_{Path.GetFileNameWithoutExtension(inputPath)}.{targetFormat}";
+        var encodedPath = Path.Combine(cacheDir, encodedFileName);
+        
+        // エンコード済みファイルが既に存在する場合はそれを使用
+        if (File.Exists(encodedPath))
+        {
+            Console.WriteLine($"Using existing encoded file: {encodedPath}");
+            return encodedPath;
+        }
+        
+        Console.WriteLine($"Encoding lossless file to {targetFormat}: {inputPath} -> {encodedPath}");
+        
+        // サンプルレートの処理：nullの場合は元ファイルのサンプルレートを維持（-arオプションを省略）
+        string sampleRateArgs = "";
+        if (!string.IsNullOrEmpty(sampleRateConfig))
+        {
+            sampleRateArgs = $" -ar {sampleRateConfig}";
+            Console.WriteLine($"Using configured sample rate: {sampleRateConfig}");
+        }
+        else
+        {
+            Console.WriteLine("Sample rate not specified - maintaining original sample rate");
+        }
+        
+        var ffmpegArgs = $"-y -v error -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
+        
+        Console.WriteLine($"Encoding command: ffmpeg {ffmpegArgs}");
+        
+        await RunFfmpeg(ffmpegArgs);
+        
+        if (!File.Exists(encodedPath))
+        {
+            throw new Exception($"Failed to encode lossless file: {inputPath}");
+        }
+        
+        Console.WriteLine($"Successfully encoded lossless file: {encodedPath}");
+        return encodedPath;
     }
 
     private string GetBaseUrl()
