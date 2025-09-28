@@ -5,6 +5,7 @@ using Lucene.Net.Index;
 using Lucene.Net.Search;
 using Lucene.Net.Util;
 using System.IO;
+using Microsoft.Extensions.Configuration;
 
 namespace repos.Services;
 
@@ -16,9 +17,11 @@ public class LuceneService : IDisposable
     private readonly IndexWriter _writer;
     private readonly LuceneVersion _version = LuceneVersion.LUCENE_48;
 
-    public LuceneService()
+    public LuceneService(IConfiguration configuration)
     {
-        var indexPath = Path.Combine(AppContext.BaseDirectory, "music_index");
+        var workingDir = configuration["WorkingDirectory"];
+        var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
+        var indexPath = Path.Combine(baseDir, "music_index");
         if (Directory.Exists(indexPath))
         {
             try

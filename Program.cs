@@ -10,6 +10,13 @@ builder.Services.AddControllers();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddSingleton<LuceneService>();
+builder.Services.AddSingleton<IHlsCacheStorage>(provider =>
+{
+    var config = provider.GetRequiredService<IConfiguration>();
+    var maxSize = config.GetValue<int>("HlsCache:MaxSize", 100);
+    var maxAgeMinutes = config.GetValue<int>("HlsCache:MaxAgeMinutes", 60);
+    return new HlsCacheStorage(maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
+});
 builder.Services.AddSingleton<HlsService>();
 
 var musicDir = builder.Configuration["MusicDirectory"];
@@ -22,6 +29,7 @@ var app = builder.Build();
 
 // Initialize Lucene index
 var luceneService = app.Services.GetRequiredService<LuceneService>();
+var hlsService = app.Services.GetRequiredService<HlsService>();
 
 _ = Task.Run(() =>
 {
