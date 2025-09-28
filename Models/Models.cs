@@ -15,7 +15,7 @@ public class SubsonicResponse
     [JsonPropertyName("openSubsonic")]
     public bool OpenSubsonic { get; set; } = true;
     [JsonPropertyName("directory")]
-    public required DirectoryResponse Directory { get; set; }
+    public DirectoryResponse? Directory { get; set; }
 }
 
 public class DirectoryResponse
@@ -42,4 +42,12 @@ public class ChildResponse
     public required string Title { get; set; }
     [JsonPropertyName("path")]
     public required string Path { get; set; }
+}
+
+public class ErrorResponse
+{
+    [JsonPropertyName("code")]
+    public int Code { get; set; }
+    [JsonPropertyName("message")]
+    public required string Message { get; set; }
 }

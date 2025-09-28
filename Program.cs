@@ -6,13 +6,12 @@ using repos.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
 builder.Services.AddControllers();
+builder.Services.AddHttpContextAccessor();
 
-// Register LuceneService
 builder.Services.AddSingleton<LuceneService>();
+builder.Services.AddSingleton<HlsService>();
 
-// 初回のみインデックス作成（musicディレクトリを指定）
 var musicDir = builder.Configuration["MusicDirectory"];
 if (string.IsNullOrEmpty(musicDir))
 {
@@ -24,10 +23,13 @@ var app = builder.Build();
 // Initialize Lucene index
 var luceneService = app.Services.GetRequiredService<LuceneService>();
 
-if (Directory.Exists(musicDir))
+_ = Task.Run(() =>
 {
-    luceneService.IndexDirectory(musicDir);
-}
+    if (Directory.Exists(musicDir))
+    {
+        luceneService.IndexDirectory(musicDir);
+    }
+});
 
 app.MapControllers();
 

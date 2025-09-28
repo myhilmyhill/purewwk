@@ -84,7 +84,7 @@ public class LuceneService : IDisposable
                 new StringField("artist", "", Field.Store.YES),
                 new StringField("coverArt", "", Field.Store.YES),
                 new StringField("name", file.Name, Field.Store.YES),
-                new StringField("path", fileId, Field.Store.YES)
+                new StringField("path", file.FullName, Field.Store.YES)
             };
             _writer.AddDocument(doc);
         }
