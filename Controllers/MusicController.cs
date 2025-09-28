@@ -77,6 +77,70 @@ public class MusicController : ControllerBase
         }
     }
 
+    [HttpGet("download.view")]
+    public IActionResult Download(string id)
+    {
+        try
+        {
+            Console.WriteLine($"Download request received - ID: {id}");
+            
+            // Get file path from Lucene index (similar to HlsService logic)
+            var directoryName = "/";
+            if (id.Contains("/") && id.LastIndexOf("/") > 0)
+            {
+                directoryName = id.Substring(0, id.LastIndexOf("/"));
+            }
+            
+            var children = _luceneService.GetChildren(directoryName);
+            var fileDoc = children.FirstOrDefault(c => c["id"] == id && c["isDir"] == "false");
+            
+            if (fileDoc == null)
+            {
+                Console.WriteLine($"File not found with id: {id}");
+                return NotFound($"Media file not found for id: {id}");
+            }
+            
+            var fullPath = fileDoc["path"];
+            
+            if (!System.IO.File.Exists(fullPath))
+            {
+                Console.WriteLine($"File not found on disk: {fullPath}");
+                return NotFound($"Media file not found on disk: {fullPath}");
+            }
+            
+            Console.WriteLine($"Serving original file: {fullPath}");
+            
+            // Get MIME type based on file extension
+            var extension = Path.GetExtension(fullPath).ToLowerInvariant();
+            var contentType = extension switch
+            {
+                ".mp3" => "audio/mpeg",
+                ".flac" => "audio/flac",
+                ".wav" => "audio/wav",
+                ".ogg" => "audio/ogg",
+                ".opus" => "audio/opus",
+                ".m4a" => "audio/mp4",
+                ".aac" => "audio/aac",
+                ".wv" => "audio/x-wavpack",
+                ".ape" => "audio/x-ape",
+                ".wma" => "audio/x-ms-wma",
+                _ => "application/octet-stream"
+            };
+            
+            // Set the filename for download
+            var fileName = Path.GetFileName(fullPath);
+            Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{fileName}\"");
+            
+            // Return the original file without any transcoding (passthrough)
+            return PhysicalFile(fullPath, contentType);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in download endpoint: {ex.Message}");
+            return StatusCode(500, $"Error downloading file: {ex.Message}");
+        }
+    }
+
     [HttpGet("hls/{id}/{*path}")]
     public IActionResult GetHlsSegment(string id, string path)
     {
