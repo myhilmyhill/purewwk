@@ -24,29 +24,31 @@ public class HlsService
         _cacheStorage = cacheStorage;
         _cacheEnabled = configuration.GetValue<bool>("HlsCache:Enabled", true);
         _losslessEncodingEnabled = configuration.GetValue<bool>("LosslessEncoding:Enabled", true);
-        _losslessFormats = configuration.GetSection("LosslessEncoding:LosslessFormats").Get<string[]>() 
+        _losslessFormats = configuration.GetSection("LosslessEncoding:LosslessFormats").Get<string[]>()
             ?? new[] { "flac", "wav", "ape", "wv", "alac", "aiff", "au" };
     }
 
     public async Task<string> GenerateHlsPlaylist(string id, int[] bitRates, string? audioTrack)
     {
-        // キャッシュキーを生成
-        var cacheKey = GenerateCacheKey(id, bitRates, audioTrack);
-        
-        // キャッシュが有効でヒットした場合はキャッシュから返す
+        // 相対パス（id 先頭の / を除去）
+        var relativeId = id.TrimStart('/');
+        var variantKey = BuildVariantKey(bitRates, audioTrack); // 例: 128_default
+        var hierarchicalKey = $"{relativeId}|{variantKey}"; // キャッシュ辞書用の内部キー
+
+        // キャッシュヒット時はそのまま返す
         if (_cacheEnabled)
         {
-            var cachedEntry = await _cacheStorage.GetAsync(cacheKey);
+            var cachedEntry = await _cacheStorage.GetAsync(hierarchicalKey);
             if (cachedEntry != null && Directory.Exists(cachedEntry.CacheDirectory))
             {
-                Console.WriteLine($"Returning cached HLS playlist for key: {cacheKey}");
+                Console.WriteLine($"Returning cached HLS playlist for hierarchical key: {hierarchicalKey}");
                 return cachedEntry.Content;
             }
         }
 
         // Get file path from Lucene index
         Console.WriteLine($"Looking for file with id: {id}");
-        
+
         // Fix directory path handling - use Unix-style paths for consistency with Lucene index
         var directoryName = "/";
         if (id.Contains("/") && id.LastIndexOf("/") > 0)
@@ -54,13 +56,13 @@ public class HlsService
             directoryName = id.Substring(0, id.LastIndexOf("/"));
         }
         Console.WriteLine($"Directory name: {directoryName}");
-        
+
         var children = _luceneService.GetChildren(directoryName);
         Console.WriteLine($"Found {children.Count()} children in directory");
-        
+
         var fileDoc = children.FirstOrDefault(c => c["id"] == id && c["isDir"] == "false");
         Console.WriteLine($"Found file doc: {fileDoc != null}");
-        
+
         if (fileDoc == null)
         {
             // デバッグ: 利用可能なファイルをすべて表示
@@ -80,14 +82,15 @@ public class HlsService
         // Create directory for HLS segments in working directory
         var workingDir = _configuration["WorkingDirectory"];
         var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
-        var cacheDir = Path.Combine(baseDir, "hls_segments", cacheKey.Replace("/", "_").Replace("\\", "_"));
+        // ディレクトリ構造: hls_segments/<relativeId>/<variantKey>/
+        var cacheDir = Path.Combine(baseDir, "hls_segments", NormalizeRelativePath(relativeId), variantKey);
         Directory.CreateDirectory(cacheDir);
 
         var playlistPath = Path.Combine(cacheDir, "playlist.m3u8");
 
         // Get base URL from current request
         var baseUrl = GetBaseUrl();
-        
+
         // Clean up the id to avoid double slashes
         var cleanId = id.TrimStart('/');
 
@@ -117,10 +120,12 @@ public class HlsService
 
         // Run FFmpeg
         await RunFfmpeg(ffmpegArgs);
-        
+
         // Read and update playlist content
+        // 新方式: /rest/hls/path/<relativeId>/<variantKey>/segment_XXX.ts という URL に書き換え
         var playlistContent = await File.ReadAllTextAsync(playlistPath);
-        playlistContent = playlistContent.Replace("segment_", $"{baseUrl}{cleanId}/segment_");
+        var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}"; // 実際の HTTP パス（/rest/hls/ の後ろ）
+        playlistContent = playlistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
         await File.WriteAllTextAsync(playlistPath, playlistContent);
 
         // Read playlist
@@ -136,21 +141,33 @@ public class HlsService
                 CreatedAt = DateTime.Now,
                 LastAccessed = DateTime.Now
             };
-            
-            await _cacheStorage.SetAsync(cacheKey, cacheEntry);
-            Console.WriteLine($"Stored HLS playlist in cache with key: {cacheKey}");
+
+            await _cacheStorage.SetAsync(hierarchicalKey, cacheEntry);
+            Console.WriteLine($"Stored HLS playlist in cache with key: {hierarchicalKey}");
         }
 
         return playlistContent;
     }
 
-    private string GenerateCacheKey(string id, int[] bitRates, string? audioTrack)
+    private string BuildVariantKey(int[] bitRates, string? audioTrack)
     {
-        var bitRateStr = bitRates.Length > 0 ? string.Join(",", bitRates) : "default";
+        var bitRateStr = bitRates.Length > 0 ? bitRates[0].ToString() : "default"; // 単一ビットレート前提
         var audioTrackStr = audioTrack ?? "default";
-        // Clean the ID consistently - remove leading slash and replace path separators
-        var cleanId = id.TrimStart('/').Replace("/", "_").Replace("\\", "_");
-        return $"{cleanId}_{bitRateStr}_{audioTrackStr}";
+        return $"{bitRateStr}_{audioTrackStr}";
+    }
+
+    private string NormalizeRelativePath(string relativeId)
+    {
+        // Windows 不正文字や .. の混入を防ぐ最小実装（既に id は内部管理で信頼されている前提）
+        // ここではシンプルにそのまま返すが、セキュリティ強化余地あり
+        return relativeId.Replace('\\', '/');
+    }
+
+    private string EscapeUrlPath(string relativeId)
+    {
+        // ブラウザ URL 用に各パスセグメントをエスケープ
+        return string.Join('/', relativeId.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString));
     }
 
     public async Task StartCacheCleanupAsync()
@@ -180,7 +197,7 @@ public class HlsService
     {
         if (!_losslessEncodingEnabled)
             return false;
-            
+
         var extension = Path.GetExtension(filePath)?.ToLowerInvariant()?.TrimStart('.');
         return !string.IsNullOrEmpty(extension) && _losslessFormats.Contains(extension);
     }
@@ -191,19 +208,19 @@ public class HlsService
         var audioCodec = _configuration.GetValue<string>("LosslessEncoding:AudioCodec", "aac");
         var audioBitrate = _configuration.GetValue<string>("LosslessEncoding:AudioBitrate", "320k");
         var sampleRateConfig = _configuration.GetValue<string>("LosslessEncoding:AudioSampleRate");
-        
+
         var encodedFileName = $"encoded_{Path.GetFileNameWithoutExtension(inputPath)}.{targetFormat}";
         var encodedPath = Path.Combine(cacheDir, encodedFileName);
-        
+
         // エンコード済みファイルが既に存在する場合はそれを使用
         if (File.Exists(encodedPath))
         {
             Console.WriteLine($"Using existing encoded file: {encodedPath}");
             return encodedPath;
         }
-        
+
         Console.WriteLine($"Encoding lossless file to {targetFormat}: {inputPath} -> {encodedPath}");
-        
+
         // サンプルレートの処理：nullの場合は元ファイルのサンプルレートを維持（-arオプションを省略）
         string sampleRateArgs = "";
         if (!string.IsNullOrEmpty(sampleRateConfig))
@@ -215,18 +232,18 @@ public class HlsService
         {
             Console.WriteLine("Sample rate not specified - maintaining original sample rate");
         }
-        
+
         var ffmpegArgs = $"-y -v error -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
-        
+
         Console.WriteLine($"Encoding command: ffmpeg {ffmpegArgs}");
-        
+
         await RunFfmpeg(ffmpegArgs);
-        
+
         if (!File.Exists(encodedPath))
         {
             throw new Exception($"Failed to encode lossless file: {inputPath}");
         }
-        
+
         Console.WriteLine($"Successfully encoded lossless file: {encodedPath}");
         return encodedPath;
     }
@@ -240,12 +257,12 @@ public class HlsService
             var scheme = request.Scheme; // http or https
             var host = request.Host.Value; // localhost:5095 or yourdomain.com
             var pathBase = request.PathBase.Value; // for apps deployed in subdirectories
-            
+
             var baseUrl = $"{scheme}://{host}{pathBase}/rest/hls/";
             Console.WriteLine($"Auto-detected base URL: {baseUrl}");
             return baseUrl;
         }
-        
+
         // Fallback to configuration if HttpContext is not available
         var configUrl = _configuration["Hls:BaseUrl"];
         if (!string.IsNullOrEmpty(configUrl))
@@ -253,7 +270,7 @@ public class HlsService
             Console.WriteLine($"Using configured base URL: {configUrl}");
             return configUrl;
         }
-        
+
         // Final fallback
         var fallbackUrl = "http://localhost:5095/rest/hls/";
         Console.WriteLine($"Using fallback base URL: {fallbackUrl}");
@@ -265,13 +282,13 @@ public class HlsService
         try
         {
             // Get FFmpeg path from environment variable or configuration, fallback to "ffmpeg"
-            var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH") 
-                ?? _configuration["FFmpeg:Path"] 
+            var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
+                ?? _configuration["FFmpeg:Path"]
                 ?? "ffmpeg";
-            
+
             Console.WriteLine($"Starting FFmpeg from path: {ffmpegPath}");
             Console.WriteLine($"FFmpeg args: {args}");
-            
+
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -284,9 +301,9 @@ public class HlsService
                     CreateNoWindow = true
                 }
             };
-            
+
             process.Start();
-            
+
             // タイムアウトを30秒に設定
             var timeout = TimeSpan.FromSeconds(30);
             using (var cts = new CancellationTokenSource(timeout))
@@ -302,9 +319,9 @@ public class HlsService
                     throw new Exception("FFmpeg process timed out after 30 seconds");
                 }
             }
-            
+
             Console.WriteLine($"FFmpeg finished with exit code: {process.ExitCode}");
-            
+
             if (process.ExitCode != 0)
             {
                 var error = await process.StandardError.ReadToEndAsync();
