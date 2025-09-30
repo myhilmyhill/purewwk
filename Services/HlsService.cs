@@ -116,8 +116,11 @@ public class HlsService
 
         Console.WriteLine($"FFmpeg HLS command: ffmpeg {ffmpegArgs}");
 
-        // Run FFmpeg
-        await RunFfmpeg(ffmpegArgs);
+        // Run FFmpeg in background and wait for first segment
+        var ffmpegTask = RunFfmpegInBackground(ffmpegArgs, cacheDir);
+        
+        // Wait for first segment to be created
+        await WaitForFirstSegment(cacheDir, playlistPath);
 
         // Read and update playlist content
         // 新方式: /rest/hls/path/<relativeId>/<variantKey>/segment_XXX.ts という URL に書き換え
@@ -125,6 +128,46 @@ public class HlsService
         var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}"; // 実際の HTTP パス（/rest/hls/ の後ろ）
         playlistContent = playlistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
         await File.WriteAllTextAsync(playlistPath, playlistContent);
+
+        // Continue FFmpeg processing in background (don't await)
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ffmpegTask;
+                Console.WriteLine("FFmpeg background conversion completed");
+                
+                // Final playlist update after completion
+                if (File.Exists(playlistPath))
+                {
+                    var finalPlaylistContent = await File.ReadAllTextAsync(playlistPath);
+                    if (!finalPlaylistContent.Contains(baseUrl))
+                    {
+                        finalPlaylistContent = finalPlaylistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
+                        await File.WriteAllTextAsync(playlistPath, finalPlaylistContent);
+                    }
+
+                    // Update final cache
+                    if (_cacheEnabled)
+                    {
+                        var finalCacheEntry = new HlsCacheEntry
+                        {
+                            Content = finalPlaylistContent,
+                            CacheDirectory = cacheDir,
+                            CreatedAt = DateTime.Now,
+                            LastAccessed = DateTime.Now
+                        };
+
+                        await _cacheStorage.SetAsync(hierarchicalKey, finalCacheEntry);
+                        Console.WriteLine("Updated final HLS cache after completion");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"FFmpeg background conversion failed: {ex.Message}");
+            }
+        });
 
         // Read playlist
         playlistContent = await File.ReadAllTextAsync(playlistPath);
@@ -274,6 +317,113 @@ public class HlsService
         var fallbackUrl = "http://localhost:5095/rest/hls/";
         Console.WriteLine($"Using fallback base URL: {fallbackUrl}");
         return fallbackUrl;
+    }
+
+
+
+    private async Task RunFfmpegInBackground(string args, string cacheDir)
+    {
+        try
+        {
+            // Get FFmpeg path from environment variable or configuration, fallback to "ffmpeg"
+            var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
+                ?? _configuration["FFmpeg:Path"]
+                ?? "ffmpeg";
+
+            Console.WriteLine($"Starting FFmpeg in background from path: {ffmpegPath}");
+            Console.WriteLine($"FFmpeg args: {args}");
+
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = args,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+
+            // Much longer timeout for background processing (10 minutes)
+            var timeout = TimeSpan.FromMinutes(10);
+            using (var cts = new CancellationTokenSource(timeout))
+            {
+                try
+                {
+                    await process.WaitForExitAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.WriteLine("FFmpeg background process timed out, killing...");
+                    process.Kill();
+                    throw new Exception("FFmpeg background process timed out after 10 minutes");
+                }
+            }
+
+            Console.WriteLine($"FFmpeg background process finished with exit code: {process.ExitCode}");
+
+            if (process.ExitCode != 0)
+            {
+                var error = await process.StandardError.ReadToEndAsync();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                Console.WriteLine($"FFmpeg background stderr: {error}");
+                Console.WriteLine($"FFmpeg background stdout: {output}");
+                // Don't throw exception for background process - just log the error
+                Console.WriteLine($"FFmpeg background error (exit code {process.ExitCode}): {error}");
+            }
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
+        {
+            Console.WriteLine("FFmpeg is not installed or not found in PATH for background processing.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error running FFmpeg in background: {ex.Message}");
+        }
+    }
+
+    private async Task WaitForFirstSegment(string cacheDir, string playlistPath)
+    {
+        Console.WriteLine($"Waiting for first HLS segment in directory: {cacheDir}");
+        
+        var timeout = TimeSpan.FromSeconds(30);
+        var startTime = DateTime.Now;
+
+        while (DateTime.Now - startTime < timeout)
+        {
+            // Check if playlist exists and has content
+            if (File.Exists(playlistPath))
+            {
+                try
+                {
+                    var playlistContent = await File.ReadAllTextAsync(playlistPath);
+                    // Check if playlist contains at least one segment reference
+                    if (playlistContent.Contains("segment_000.ts"))
+                    {
+                        // Check if the first segment file actually exists
+                        var firstSegmentPath = Path.Combine(cacheDir, "segment_000.ts");
+                        if (File.Exists(firstSegmentPath) && new FileInfo(firstSegmentPath).Length > 0)
+                        {
+                            Console.WriteLine($"First segment created: {firstSegmentPath}");
+                            return;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error reading playlist while waiting: {ex.Message}");
+                }
+            }
+
+            // Wait a bit before checking again
+            await Task.Delay(500);
+        }
+
+        throw new Exception("Timeout waiting for first HLS segment to be created");
     }
 
 
