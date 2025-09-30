@@ -232,19 +232,44 @@ public class FileWatcherService : IDisposable
                 return;
             }
 
-            // メインの音楽ディレクトリのみ更新
-            _logger.LogInformation("Updating index for directory: {Directory}", musicDirectory);
+            _logger.LogInformation("Processing incremental index updates for {Count} changed paths", changedPaths.Count);
             
             await Task.Run(() =>
             {
                 try
                 {
-                    _luceneService.IndexDirectory(musicDirectory);
-                    _logger.LogInformation("Successfully updated index for directory: {Directory}", musicDirectory);
+                    foreach (var path in changedPaths)
+                    {
+                        // Check if path is within the music directory
+                        if (path.StartsWith(musicDirectory, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Skip non-music files for efficiency (unless it's a directory)
+                            if (File.Exists(path) && !IsMusicFile(path))
+                            {
+                                _logger.LogTrace("Skipping non-music file: {Path}", path);
+                                continue;
+                            }
+
+                            if (File.Exists(path) || Directory.Exists(path))
+                            {
+                                // File or directory exists - add/update
+                                _luceneService.AddOrUpdatePath(path, musicDirectory);
+                                _logger.LogDebug("Updated index for: {Path}", path);
+                            }
+                            else
+                            {
+                                // File or directory deleted - remove from index
+                                _luceneService.RemoveFromIndex(path);
+                                _logger.LogDebug("Removed from index: {Path}", path);
+                            }
+                        }
+                    }
+                    
+                    _logger.LogInformation("Successfully processed incremental index updates");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to update index for directory: {Directory}", musicDirectory);
+                    _logger.LogError(ex, "Failed to process incremental index updates");
                 }
             });
         }

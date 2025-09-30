@@ -126,8 +126,17 @@ public class HlsService
         // 新方式: /rest/hls/path/<relativeId>/<variantKey>/segment_XXX.ts という URL に書き換え
         var playlistContent = await File.ReadAllTextAsync(playlistPath);
         var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}"; // 実際の HTTP パス（/rest/hls/ の後ろ）
-        playlistContent = playlistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
+        var fullSegmentUrl = $"{baseUrl}{urlRelativePath}/segment_";
+        
+        Console.WriteLine($"Base URL: {baseUrl}");
+        Console.WriteLine($"URL Relative Path: {urlRelativePath}");
+        Console.WriteLine($"Full Segment URL prefix: {fullSegmentUrl}");
+        Console.WriteLine($"Original playlist content preview: {playlistContent.Substring(0, Math.Min(200, playlistContent.Length))}");
+        
+        playlistContent = playlistContent.Replace("segment_", fullSegmentUrl);
         await File.WriteAllTextAsync(playlistPath, playlistContent);
+        
+        Console.WriteLine($"Updated playlist content preview: {playlistContent.Substring(0, Math.Min(200, playlistContent.Length))}");
 
         // Continue FFmpeg processing in background (don't await)
         _ = Task.Run(async () =>

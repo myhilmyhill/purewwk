@@ -37,7 +37,15 @@ _ = Task.Run(() =>
 {
     if (Directory.Exists(musicDir))
     {
-        luceneService.IndexDirectory(musicDir);
+        if (!luceneService.IsIndexValid())
+        {
+            Console.WriteLine("Index not found or invalid. Creating new index...");
+            luceneService.IndexDirectory(musicDir);
+        }
+        else
+        {
+            Console.WriteLine("Valid index found. Skipping indexing.");
+        }
     }
 });
 
