@@ -240,6 +240,25 @@ public class HlsService
 
         Console.WriteLine($"Encoding lossless file to {targetFormat}: {inputPath} -> {encodedPath}");
 
+        // First, validate the lossless file before encoding
+        var extension = Path.GetExtension(inputPath).ToLowerInvariant();
+        Console.WriteLine($"Validating {extension} file before encoding...");
+        
+        var probeResult = await ProbeMediaFile(inputPath);
+        if (!probeResult.IsValid)
+        {
+            Console.WriteLine($"Lossless file validation failed: {probeResult.Error}");
+            
+            // For FLAC files, try to recover using different FFmpeg options
+            if (extension == ".flac")
+            {
+                Console.WriteLine("Attempting FLAC-specific recovery encoding...");
+                return await EncodeFlacWithRecovery(inputPath, encodedPath, audioCodec ?? "aac", audioBitrate ?? "128k", sampleRateConfig);
+            }
+            
+            Console.WriteLine("Attempting standard encoding with error recovery...");
+        }
+
         // サンプルレートの処理：nullの場合は元ファイルのサンプルレートを維持（-arオプションを省略）
         string sampleRateArgs = "";
         if (!string.IsNullOrEmpty(sampleRateConfig))
@@ -252,11 +271,28 @@ public class HlsService
             Console.WriteLine("Sample rate not specified - maintaining original sample rate");
         }
 
-        var ffmpegArgs = $"-y -v error -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
+        // Use more robust encoding options for potentially corrupted files
+        var ffmpegArgs = $"-y -v info -analyzeduration 10M -probesize 10M -err_detect ignore_err -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
 
         Console.WriteLine($"Encoding command: ffmpeg {ffmpegArgs}");
 
-        await RunFfmpeg(ffmpegArgs);
+        try
+        {
+            await RunFfmpeg(ffmpegArgs);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Standard encoding failed: {ex.Message}");
+            
+            // Try fallback encoding with more aggressive error handling
+            if (extension == ".flac")
+            {
+                Console.WriteLine("Attempting FLAC fallback encoding...");
+                return await EncodeFlacWithRecovery(inputPath, encodedPath, audioCodec ?? "aac", audioBitrate ?? "128k", sampleRateConfig);
+            }
+            
+            throw;
+        }
 
         if (!File.Exists(encodedPath))
         {
@@ -265,6 +301,70 @@ public class HlsService
 
         Console.WriteLine($"Successfully encoded lossless file: {encodedPath}");
         return encodedPath;
+    }
+
+    private async Task<string> EncodeFlacWithRecovery(string inputPath, string encodedPath, string audioCodec, string audioBitrate, string? sampleRateConfig)
+    {
+        Console.WriteLine("Attempting FLAC recovery encoding with aggressive error handling...");
+
+        // Ensure audioCodec and audioBitrate are not null
+        audioCodec = audioCodec ?? "aac";
+        audioBitrate = audioBitrate ?? "128k";
+
+        string sampleRateArgs = "";
+        if (!string.IsNullOrEmpty(sampleRateConfig))
+        {
+            sampleRateArgs = $" -ar {sampleRateConfig}";
+        }
+
+        // Try multiple encoding strategies for corrupted FLAC files
+        var strategies = new[]
+        {
+            // Strategy 1: Ignore all errors and use shorter analysis
+            $"-y -v warning -analyzeduration 1M -probesize 1M -err_detect ignore_err -fflags +discardcorrupt -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"",
+            
+            // Strategy 2: Use raw audio format assumptions
+            $"-y -v warning -f flac -err_detect ignore_err -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"",
+            
+            // Strategy 3: Very basic conversion with maximum error tolerance
+            $"-y -v warning -err_detect ignore_err -fflags +discardcorrupt +igndts -avoid_negative_ts make_zero -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate} -ac 2{sampleRateArgs} \"{encodedPath}\""
+        };
+
+        Exception? lastException = null;
+
+        for (int i = 0; i < strategies.Length; i++)
+        {
+            try
+            {
+                Console.WriteLine($"Trying FLAC recovery strategy {i + 1}: {strategies[i]}");
+                
+                // Delete any partial output from previous attempts
+                if (File.Exists(encodedPath))
+                {
+                    File.Delete(encodedPath);
+                }
+
+                await RunFfmpegCommand(strategies[i], 120); // Extended timeout for recovery
+
+                if (File.Exists(encodedPath) && new FileInfo(encodedPath).Length > 0)
+                {
+                    Console.WriteLine($"FLAC recovery strategy {i + 1} succeeded!");
+                    return encodedPath;
+                }
+                else
+                {
+                    Console.WriteLine($"FLAC recovery strategy {i + 1} produced no output");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"FLAC recovery strategy {i + 1} failed: {ex.Message}");
+                lastException = ex;
+            }
+        }
+
+        // If all strategies fail, throw the last exception
+        throw new Exception($"All FLAC recovery strategies failed. File may be severely corrupted: {inputPath}", lastException);
     }
 
     private string GetBaseUrl()
