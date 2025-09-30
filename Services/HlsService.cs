@@ -94,45 +94,24 @@ public class HlsService
         // Clean up the id to avoid double slashes
         var cleanId = id.TrimStart('/');
 
-        // Validate and prepare input file
-        Console.WriteLine($"Validating input file: {fullPath}");
-        var fileInfo = new FileInfo(fullPath);
-        Console.WriteLine($"File size: {fileInfo.Length} bytes");
-        Console.WriteLine($"File extension: {fileInfo.Extension}");
-        
-        // Validate file accessibility
-        if (!await ValidateFileAccess(fullPath))
-        {
-            throw new Exception($"Cannot access input file: {fullPath}");
-        }
-        
-        // シンプルな処理：すべてのファイルを直接処理
-        string inputFileForHls = fullPath;
-        var extension = Path.GetExtension(fullPath).ToLowerInvariant();
-        
-        // MP4/M4A ファイルのみ moov atom の問題をチェック
-        if (new[] { ".mp4", ".m4a", ".m4v", ".mov" }.Contains(extension))
-        {
-            Console.WriteLine($"Checking MP4 file for moov atom issues: {fullPath}");
-            inputFileForHls = await ValidateAndFixMp4File(fullPath, cacheDir);
-        }
-        else
-        {
-            Console.WriteLine($"Using file directly for HLS processing: {fullPath}");
-        }
 
-        // シンプルな FFmpeg コマンド - すべての音楽ファイルを同じように処理
+        
+        // すべてのファイルを直接処理（ロスレス変換をスキップ）
+        string inputFileForHls = fullPath;
+        Console.WriteLine($"Using file directly for HLS processing: {fullPath}");
+
+        // FFmpeg command for HLS - use first bitrate if provided, otherwise use default
         string ffmpegArgs;
         if (bitRates.Length > 0)
         {
             var bitRate = bitRates[0]; // Use only the first bitrate
-            ffmpegArgs = $"-y -i \"{inputFileForHls}\" -c:a aac -b:a {bitRate}k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-            Console.WriteLine($"Using audio bitrate: {bitRate}k");
+            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            Console.WriteLine($"Using single bitrate: {bitRate}k");
         }
         else
         {
-            ffmpegArgs = $"-y -i \"{inputFileForHls}\" -c:a aac -b:a 128k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-            Console.WriteLine("Using default audio bitrate: 128k");
+            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            Console.WriteLine("Using default bitrate");
         }
 
         Console.WriteLine($"FFmpeg HLS command: ffmpeg {ffmpegArgs}");
@@ -216,11 +195,8 @@ public class HlsService
 
     private bool IsLosslessFormat(string filePath)
     {
-        if (!_losslessEncodingEnabled)
-            return false;
-
-        var extension = Path.GetExtension(filePath)?.ToLowerInvariant()?.TrimStart('.');
-        return !string.IsNullOrEmpty(extension) && _losslessFormats.Contains(extension);
+        // すべてのファイルを直接処理するため、常にfalseを返す
+        return false;
     }
 
     private async Task<string> EncodeToLossyFormat(string inputPath, string cacheDir)
@@ -242,25 +218,6 @@ public class HlsService
 
         Console.WriteLine($"Encoding lossless file to {targetFormat}: {inputPath} -> {encodedPath}");
 
-        // First, validate the lossless file before encoding
-        var extension = Path.GetExtension(inputPath).ToLowerInvariant();
-        Console.WriteLine($"Validating {extension} file before encoding...");
-        
-        var probeResult = await ProbeMediaFile(inputPath);
-        if (!probeResult.IsValid)
-        {
-            Console.WriteLine($"Lossless file validation failed: {probeResult.Error}");
-            
-            // For FLAC files, try to recover using different FFmpeg options
-            if (extension == ".flac")
-            {
-                Console.WriteLine("Attempting FLAC-specific recovery encoding...");
-                return await EncodeFlacWithRecovery(inputPath, encodedPath, audioCodec ?? "aac", audioBitrate ?? "128k", sampleRateConfig);
-            }
-            
-            Console.WriteLine("Attempting standard encoding with error recovery...");
-        }
-
         // サンプルレートの処理：nullの場合は元ファイルのサンプルレートを維持（-arオプションを省略）
         string sampleRateArgs = "";
         if (!string.IsNullOrEmpty(sampleRateConfig))
@@ -273,28 +230,11 @@ public class HlsService
             Console.WriteLine("Sample rate not specified - maintaining original sample rate");
         }
 
-        // Use more robust encoding options for potentially corrupted files
-        var ffmpegArgs = $"-y -v info -analyzeduration 10M -probesize 10M -err_detect ignore_err -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
+        var ffmpegArgs = $"-y -v error -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
 
         Console.WriteLine($"Encoding command: ffmpeg {ffmpegArgs}");
 
-        try
-        {
-            await RunFfmpeg(ffmpegArgs);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Standard encoding failed: {ex.Message}");
-            
-            // Try fallback encoding with more aggressive error handling
-            if (extension == ".flac")
-            {
-                Console.WriteLine("Attempting FLAC fallback encoding...");
-                return await EncodeFlacWithRecovery(inputPath, encodedPath, audioCodec ?? "aac", audioBitrate ?? "128k", sampleRateConfig);
-            }
-            
-            throw;
-        }
+        await RunFfmpeg(ffmpegArgs);
 
         if (!File.Exists(encodedPath))
         {
@@ -305,69 +245,7 @@ public class HlsService
         return encodedPath;
     }
 
-    private async Task<string> EncodeFlacWithRecovery(string inputPath, string encodedPath, string audioCodec, string audioBitrate, string? sampleRateConfig)
-    {
-        Console.WriteLine("Attempting FLAC recovery encoding with aggressive error handling...");
 
-        // Ensure audioCodec and audioBitrate are not null
-        audioCodec = audioCodec ?? "aac";
-        audioBitrate = audioBitrate ?? "128k";
-
-        string sampleRateArgs = "";
-        if (!string.IsNullOrEmpty(sampleRateConfig))
-        {
-            sampleRateArgs = $" -ar {sampleRateConfig}";
-        }
-
-        // Try multiple encoding strategies for corrupted FLAC files
-        var strategies = new[]
-        {
-            // Strategy 1: Ignore all errors and use shorter analysis
-            $"-y -v warning -analyzeduration 1M -probesize 1M -err_detect ignore_err -fflags +discardcorrupt -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"",
-            
-            // Strategy 2: Use raw audio format assumptions
-            $"-y -v warning -f flac -err_detect ignore_err -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"",
-            
-            // Strategy 3: Very basic conversion with maximum error tolerance
-            $"-y -v warning -err_detect ignore_err -fflags +discardcorrupt +igndts -avoid_negative_ts make_zero -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate} -ac 2{sampleRateArgs} \"{encodedPath}\""
-        };
-
-        Exception? lastException = null;
-
-        for (int i = 0; i < strategies.Length; i++)
-        {
-            try
-            {
-                Console.WriteLine($"Trying FLAC recovery strategy {i + 1}: {strategies[i]}");
-                
-                // Delete any partial output from previous attempts
-                if (File.Exists(encodedPath))
-                {
-                    File.Delete(encodedPath);
-                }
-
-                await RunFfmpegCommand(strategies[i], 120); // Extended timeout for recovery
-
-                if (File.Exists(encodedPath) && new FileInfo(encodedPath).Length > 0)
-                {
-                    Console.WriteLine($"FLAC recovery strategy {i + 1} succeeded!");
-                    return encodedPath;
-                }
-                else
-                {
-                    Console.WriteLine($"FLAC recovery strategy {i + 1} produced no output");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"FLAC recovery strategy {i + 1} failed: {ex.Message}");
-                lastException = ex;
-            }
-        }
-
-        // If all strategies fail, throw the last exception
-        throw new Exception($"All FLAC recovery strategies failed. File may be severely corrupted: {inputPath}", lastException);
-    }
 
     private string GetBaseUrl()
     {
@@ -398,76 +276,26 @@ public class HlsService
         return fallbackUrl;
     }
 
-    private async Task<bool> ValidateFileAccess(string filePath)
+
+
+    private async Task RunFfmpeg(string args)
     {
         try
         {
-            using var fs = File.OpenRead(filePath);
-            var buffer = new byte[16];
-            var bytesRead = await fs.ReadAsync(buffer, 0, 16);
-            Console.WriteLine($"File validation: Read {bytesRead} bytes successfully");
-            return bytesRead > 0;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"File validation failed: {ex.Message}");
-            return false;
-        }
-    }
-
-    private async Task<string> ValidateAndFixMp4File(string inputPath, string cacheDir)
-    {
-        var extension = Path.GetExtension(inputPath).ToLowerInvariant();
-        
-        // Only process MP4 container formats that might have moov atom issues
-        if (!new[] { ".mp4", ".m4a", ".m4v", ".mov" }.Contains(extension))
-        {
-            Console.WriteLine($"File extension {extension} - no MP4 validation needed");
-            return inputPath;
-        }
-
-        Console.WriteLine($"Validating MP4 file for moov atom: {inputPath}");
-        
-        // First, try to probe the file with FFmpeg to detect issues
-        var probeResult = await ProbeMediaFile(inputPath);
-        if (probeResult.IsValid)
-        {
-            Console.WriteLine("MP4 file validation successful - no issues detected");
-            return inputPath;
-        }
-
-        Console.WriteLine($"MP4 file has issues: {probeResult.Error}");
-        
-        // If moov atom is missing or at the end, try to fix it
-        if (probeResult.Error.Contains("moov atom not found") || 
-            probeResult.Error.Contains("Invalid data found when processing input"))
-        {
-            Console.WriteLine("Attempting to fix MP4 file with moov atom issues...");
-            return await FixMp4MovAtom(inputPath, cacheDir);
-        }
-
-        // For other issues, return original path and let FFmpeg handle it
-        Console.WriteLine("MP4 file has other issues - proceeding with original file");
-        return inputPath;
-    }
-
-    private async Task<(bool IsValid, string Error)> ProbeMediaFile(string inputPath)
-    {
-        try
-        {
+            // Get FFmpeg path from environment variable or configuration, fallback to "ffmpeg"
             var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
                 ?? _configuration["FFmpeg:Path"]
                 ?? "ffmpeg";
 
-            var probeArgs = $"-v error -i \"{inputPath}\" -f null -";
-            Console.WriteLine($"Probing file: ffmpeg {probeArgs}");
+            Console.WriteLine($"Starting FFmpeg from path: {ffmpegPath}");
+            Console.WriteLine($"FFmpeg args: {args}");
 
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = ffmpegPath,
-                    Arguments = probeArgs,
+                    Arguments = args,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -476,128 +304,33 @@ public class HlsService
             };
 
             process.Start();
-            
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await process.WaitForExitAsync(cts.Token);
 
-            var error = await process.StandardError.ReadToEndAsync();
-            var output = await process.StandardOutput.ReadToEndAsync();
-            
-            Console.WriteLine($"Probe result - Exit code: {process.ExitCode}");
-            if (!string.IsNullOrEmpty(error))
+            // タイムアウトを30秒に設定
+            var timeout = TimeSpan.FromSeconds(30);
+            using (var cts = new CancellationTokenSource(timeout))
             {
-                Console.WriteLine($"Probe stderr: {error}");
+                try
+                {
+                    await process.WaitForExitAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.WriteLine("FFmpeg process timed out, killing...");
+                    process.Kill();
+                    throw new Exception("FFmpeg process timed out after 30 seconds");
+                }
             }
 
-            return (process.ExitCode == 0, error);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error probing media file: {ex.Message}");
-            return (false, ex.Message);
-        }
-    }
+            Console.WriteLine($"FFmpeg finished with exit code: {process.ExitCode}");
 
-    private async Task<string> FixMp4MovAtom(string inputPath, string cacheDir)
-    {
-        try
-        {
-            var fixedFileName = $"fixed_{Path.GetFileName(inputPath)}";
-            var fixedPath = Path.Combine(cacheDir, fixedFileName);
-
-            // Check if fixed version already exists
-            if (File.Exists(fixedPath))
+            if (process.ExitCode != 0)
             {
-                Console.WriteLine($"Using existing fixed MP4 file: {fixedPath}");
-                return fixedPath;
+                var error = await process.StandardError.ReadToEndAsync();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                Console.WriteLine($"FFmpeg stderr: {error}");
+                Console.WriteLine($"FFmpeg stdout: {output}");
+                throw new Exception($"FFmpeg error (exit code {process.ExitCode}): {error}");
             }
-
-            Console.WriteLine($"Fixing MP4 moov atom: {inputPath} -> {fixedPath}");
-
-            var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
-                ?? _configuration["FFmpeg:Path"]
-                ?? "ffmpeg";
-
-            // Use FFmpeg to copy and fix the MP4 structure
-            var fixArgs = $"-y -v info -i \"{inputPath}\" -c copy -movflags +faststart \"{fixedPath}\"";
-            Console.WriteLine($"Fix command: ffmpeg {fixArgs}");
-
-            await RunFfmpegCommand(fixArgs, 60); // Allow more time for fixing
-
-            if (!File.Exists(fixedPath))
-            {
-                throw new Exception("Failed to create fixed MP4 file");
-            }
-
-            Console.WriteLine($"Successfully fixed MP4 file: {fixedPath}");
-            return fixedPath;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to fix MP4 file: {ex.Message}");
-            Console.WriteLine("Falling back to original file");
-            return inputPath; // Fall back to original file
-        }
-    }
-
-    private async Task RunFfmpegCommand(string args, int timeoutSeconds = 30)
-    {
-        var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
-            ?? _configuration["FFmpeg:Path"]
-            ?? "ffmpeg";
-
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = ffmpegPath,
-                Arguments = args,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-
-        process.Start();
-        
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-        try
-        {
-            await process.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            Console.WriteLine($"FFmpeg process timed out after {timeoutSeconds} seconds, killing...");
-            try { process.Kill(); } catch { }
-            throw new Exception($"FFmpeg process timed out after {timeoutSeconds} seconds");
-        }
-
-        var error = await process.StandardError.ReadToEndAsync();
-        var output = await process.StandardOutput.ReadToEndAsync();
-        
-        Console.WriteLine($"FFmpeg exit code: {process.ExitCode}");
-        if (!string.IsNullOrEmpty(error))
-        {
-            Console.WriteLine($"FFmpeg stderr: {error}");
-        }
-        if (!string.IsNullOrEmpty(output))
-        {
-            Console.WriteLine($"FFmpeg stdout: {output}");
-        }
-
-        if (process.ExitCode != 0)
-        {
-            throw new Exception($"FFmpeg error (exit code {process.ExitCode}): {error}");
-        }
-    }
-
-    private async Task RunFfmpeg(string args)
-    {
-        try
-        {
-            Console.WriteLine($"Running FFmpeg with args: {args}");
-            await RunFfmpegCommand(args, 60); // Use 60 second timeout for HLS generation
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
         {
@@ -606,7 +339,7 @@ public class HlsService
         catch (Exception ex)
         {
             Console.WriteLine($"Error running FFmpeg: {ex.Message}");
-            throw;
+            throw new Exception($"Error running FFmpeg: {ex.Message}");
         }
     }
 }
