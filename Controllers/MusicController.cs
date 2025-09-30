@@ -37,7 +37,7 @@ public class MusicController : ControllerBase
         var dirResp = new DirectoryResponse
         {
             Id = id,
-            Parent = id == "/" ? "" : string.Join("/", id.Split('/').SkipLast(1)),
+            Parent = id == "/" ? "" : (string.Join("/", id.Split('/').SkipLast(1)) == "" ? "/" : string.Join("/", id.Split('/').SkipLast(1))),
             Name = id == "/" ? "music" : id.Split('/').Last(),
             Child = childList
         };
