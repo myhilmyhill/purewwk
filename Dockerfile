@@ -15,6 +15,10 @@ RUN dotnet publish -a $TARGETARCH --no-restore -o /app
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
+
+# Install gosu for proper user switching
+RUN apt-get update && apt-get install -y gosu ffmpeg && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 8080
 WORKDIR /app
 COPY --link --from=build /app .
@@ -32,9 +36,6 @@ if [ -d "/app/hls_segments" ]; then\n\
 fi\n\
 # Switch to app user and execute the application\n\
 exec gosu $APP_UID "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
-
-# Install gosu for proper user switching
-RUN apt-get update && apt-get install -y gosu ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Define volumes for persistent data
 VOLUME ["/app/music_index", "/app/hls_segments"]
