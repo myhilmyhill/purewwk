@@ -106,30 +106,32 @@ public class HlsService
             throw new Exception($"Cannot access input file: {fullPath}");
         }
         
-        // Check if the file is lossless format and needs encoding first
+        // シンプルな処理：すべてのファイルを直接処理
         string inputFileForHls = fullPath;
-        if (IsLosslessFormat(fullPath))
+        var extension = Path.GetExtension(fullPath).ToLowerInvariant();
+        
+        // MP4/M4A ファイルのみ moov atom の問題をチェック
+        if (new[] { ".mp4", ".m4a", ".m4v", ".mov" }.Contains(extension))
         {
-            Console.WriteLine($"Detected lossless format file: {fullPath}");
-            inputFileForHls = await EncodeToLossyFormat(fullPath, cacheDir);
+            Console.WriteLine($"Checking MP4 file for moov atom issues: {fullPath}");
+            inputFileForHls = await ValidateAndFixMp4File(fullPath, cacheDir);
         }
         else
         {
-            // For MP4/M4A files, check for moov atom issues and fix if necessary
-            inputFileForHls = await ValidateAndFixMp4File(fullPath, cacheDir);
+            Console.WriteLine($"Using file directly for HLS processing: {fullPath}");
         }
 
-        // FFmpeg command for HLS - audio-only processing for music files
+        // シンプルな FFmpeg コマンド - すべての音楽ファイルを同じように処理
         string ffmpegArgs;
         if (bitRates.Length > 0)
         {
             var bitRate = bitRates[0]; // Use only the first bitrate
-            ffmpegArgs = $"-y -v info -analyzeduration 10M -probesize 10M -i \"{inputFileForHls}\" -c:a aac -b:a {bitRate}k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            ffmpegArgs = $"-y -i \"{inputFileForHls}\" -c:a aac -b:a {bitRate}k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
             Console.WriteLine($"Using audio bitrate: {bitRate}k");
         }
         else
         {
-            ffmpegArgs = $"-y -v info -analyzeduration 10M -probesize 10M -i \"{inputFileForHls}\" -c:a aac -b:a 128k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            ffmpegArgs = $"-y -i \"{inputFileForHls}\" -c:a aac -b:a 128k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
             Console.WriteLine("Using default audio bitrate: 128k");
         }
 
