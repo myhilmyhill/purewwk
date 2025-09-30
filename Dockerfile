@@ -30,10 +30,6 @@ if [ -d "/app/hls_segments" ]; then\n\
   chown -R $APP_UID:$APP_UID /app/hls_segments\n\
   chmod -R 755 /app/hls_segments\n\
 fi\n\
-# Create Music directory if it does not exist\n\
-mkdir -p /app/Music\n\
-chown -R $APP_UID:$APP_UID /app/Music\n\
-chmod -R 755 /app/Music\n\
 # Switch to app user and execute the application\n\
 exec gosu $APP_UID "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 

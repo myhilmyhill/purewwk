@@ -23,7 +23,7 @@ public class DirectoryResponse
     [JsonPropertyName("id")]
     public required string Id { get; set; }
     [JsonPropertyName("parent")]
-    public required string Parent { get; set; }
+    public required string? Parent { get; set; }
     [JsonPropertyName("name")]
     public required string Name { get; set; }
     [JsonPropertyName("child")]
@@ -37,7 +37,7 @@ public class ChildResponse
     [JsonPropertyName("parent")]
     public required string Parent { get; set; }
     [JsonPropertyName("isDir")]
-    public bool IsDir { get; set; }
+    public required bool IsDir { get; set; }
     [JsonPropertyName("title")]
     public required string Title { get; set; }
     [JsonPropertyName("path")]
@@ -47,7 +47,7 @@ public class ChildResponse
 public class ErrorResponse
 {
     [JsonPropertyName("code")]
-    public int Code { get; set; }
+    public required int Code { get; set; }
     [JsonPropertyName("message")]
     public required string Message { get; set; }
 }

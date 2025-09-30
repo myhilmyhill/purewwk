@@ -94,6 +94,18 @@ public class HlsService
         // Clean up the id to avoid double slashes
         var cleanId = id.TrimStart('/');
 
+        // Validate and prepare input file
+        Console.WriteLine($"Validating input file: {fullPath}");
+        var fileInfo = new FileInfo(fullPath);
+        Console.WriteLine($"File size: {fileInfo.Length} bytes");
+        Console.WriteLine($"File extension: {fileInfo.Extension}");
+        
+        // Validate file accessibility
+        if (!await ValidateFileAccess(fullPath))
+        {
+            throw new Exception($"Cannot access input file: {fullPath}");
+        }
+        
         // Check if the file is lossless format and needs encoding first
         string inputFileForHls = fullPath;
         if (IsLosslessFormat(fullPath))
@@ -101,19 +113,24 @@ public class HlsService
             Console.WriteLine($"Detected lossless format file: {fullPath}");
             inputFileForHls = await EncodeToLossyFormat(fullPath, cacheDir);
         }
+        else
+        {
+            // For MP4/M4A files, check for moov atom issues and fix if necessary
+            inputFileForHls = await ValidateAndFixMp4File(fullPath, cacheDir);
+        }
 
-        // FFmpeg command for HLS - use first bitrate if provided, otherwise use default
+        // FFmpeg command for HLS - audio-only processing for music files
         string ffmpegArgs;
         if (bitRates.Length > 0)
         {
             var bitRate = bitRates[0]; // Use only the first bitrate
-            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-            Console.WriteLine($"Using single bitrate: {bitRate}k");
+            ffmpegArgs = $"-y -v info -analyzeduration 10M -probesize 10M -i \"{inputFileForHls}\" -c:a aac -b:a {bitRate}k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            Console.WriteLine($"Using audio bitrate: {bitRate}k");
         }
         else
         {
-            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-            Console.WriteLine("Using default bitrate");
+            ffmpegArgs = $"-y -v info -analyzeduration 10M -probesize 10M -i \"{inputFileForHls}\" -c:a aac -b:a 128k -vn -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            Console.WriteLine("Using default audio bitrate: 128k");
         }
 
         Console.WriteLine($"FFmpeg HLS command: ffmpeg {ffmpegArgs}");
@@ -170,9 +187,9 @@ public class HlsService
             .Select(Uri.EscapeDataString));
     }
 
-    public async Task StartCacheCleanupAsync()
+    public Task StartCacheCleanupAsync()
     {
-        if (!_cacheEnabled) return;
+        if (!_cacheEnabled) return Task.CompletedTask;
 
         // バックグラウンドで定期的なクリーンアップを実行
         _ = Task.Run(async () =>
@@ -191,6 +208,8 @@ public class HlsService
                 }
             }
         });
+        
+        return Task.CompletedTask;
     }
 
     private bool IsLosslessFormat(string filePath)
@@ -277,24 +296,76 @@ public class HlsService
         return fallbackUrl;
     }
 
-    private async Task RunFfmpeg(string args)
+    private async Task<bool> ValidateFileAccess(string filePath)
     {
         try
         {
-            // Get FFmpeg path from environment variable or configuration, fallback to "ffmpeg"
+            using var fs = File.OpenRead(filePath);
+            var buffer = new byte[16];
+            var bytesRead = await fs.ReadAsync(buffer, 0, 16);
+            Console.WriteLine($"File validation: Read {bytesRead} bytes successfully");
+            return bytesRead > 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"File validation failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task<string> ValidateAndFixMp4File(string inputPath, string cacheDir)
+    {
+        var extension = Path.GetExtension(inputPath).ToLowerInvariant();
+        
+        // Only process MP4 container formats that might have moov atom issues
+        if (!new[] { ".mp4", ".m4a", ".m4v", ".mov" }.Contains(extension))
+        {
+            Console.WriteLine($"File extension {extension} - no MP4 validation needed");
+            return inputPath;
+        }
+
+        Console.WriteLine($"Validating MP4 file for moov atom: {inputPath}");
+        
+        // First, try to probe the file with FFmpeg to detect issues
+        var probeResult = await ProbeMediaFile(inputPath);
+        if (probeResult.IsValid)
+        {
+            Console.WriteLine("MP4 file validation successful - no issues detected");
+            return inputPath;
+        }
+
+        Console.WriteLine($"MP4 file has issues: {probeResult.Error}");
+        
+        // If moov atom is missing or at the end, try to fix it
+        if (probeResult.Error.Contains("moov atom not found") || 
+            probeResult.Error.Contains("Invalid data found when processing input"))
+        {
+            Console.WriteLine("Attempting to fix MP4 file with moov atom issues...");
+            return await FixMp4MovAtom(inputPath, cacheDir);
+        }
+
+        // For other issues, return original path and let FFmpeg handle it
+        Console.WriteLine("MP4 file has other issues - proceeding with original file");
+        return inputPath;
+    }
+
+    private async Task<(bool IsValid, string Error)> ProbeMediaFile(string inputPath)
+    {
+        try
+        {
             var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
                 ?? _configuration["FFmpeg:Path"]
                 ?? "ffmpeg";
 
-            Console.WriteLine($"Starting FFmpeg from path: {ffmpegPath}");
-            Console.WriteLine($"FFmpeg args: {args}");
+            var probeArgs = $"-v error -i \"{inputPath}\" -f null -";
+            Console.WriteLine($"Probing file: ffmpeg {probeArgs}");
 
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = ffmpegPath,
-                    Arguments = args,
+                    Arguments = probeArgs,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -303,33 +374,128 @@ public class HlsService
             };
 
             process.Start();
+            
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await process.WaitForExitAsync(cts.Token);
 
-            // タイムアウトを30秒に設定
-            var timeout = TimeSpan.FromSeconds(30);
-            using (var cts = new CancellationTokenSource(timeout))
+            var error = await process.StandardError.ReadToEndAsync();
+            var output = await process.StandardOutput.ReadToEndAsync();
+            
+            Console.WriteLine($"Probe result - Exit code: {process.ExitCode}");
+            if (!string.IsNullOrEmpty(error))
             {
-                try
-                {
-                    await process.WaitForExitAsync(cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Console.WriteLine("FFmpeg process timed out, killing...");
-                    process.Kill();
-                    throw new Exception("FFmpeg process timed out after 30 seconds");
-                }
+                Console.WriteLine($"Probe stderr: {error}");
             }
 
-            Console.WriteLine($"FFmpeg finished with exit code: {process.ExitCode}");
+            return (process.ExitCode == 0, error);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error probing media file: {ex.Message}");
+            return (false, ex.Message);
+        }
+    }
 
-            if (process.ExitCode != 0)
+    private async Task<string> FixMp4MovAtom(string inputPath, string cacheDir)
+    {
+        try
+        {
+            var fixedFileName = $"fixed_{Path.GetFileName(inputPath)}";
+            var fixedPath = Path.Combine(cacheDir, fixedFileName);
+
+            // Check if fixed version already exists
+            if (File.Exists(fixedPath))
             {
-                var error = await process.StandardError.ReadToEndAsync();
-                var output = await process.StandardOutput.ReadToEndAsync();
-                Console.WriteLine($"FFmpeg stderr: {error}");
-                Console.WriteLine($"FFmpeg stdout: {output}");
-                throw new Exception($"FFmpeg error (exit code {process.ExitCode}): {error}");
+                Console.WriteLine($"Using existing fixed MP4 file: {fixedPath}");
+                return fixedPath;
             }
+
+            Console.WriteLine($"Fixing MP4 moov atom: {inputPath} -> {fixedPath}");
+
+            var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
+                ?? _configuration["FFmpeg:Path"]
+                ?? "ffmpeg";
+
+            // Use FFmpeg to copy and fix the MP4 structure
+            var fixArgs = $"-y -v info -i \"{inputPath}\" -c copy -movflags +faststart \"{fixedPath}\"";
+            Console.WriteLine($"Fix command: ffmpeg {fixArgs}");
+
+            await RunFfmpegCommand(fixArgs, 60); // Allow more time for fixing
+
+            if (!File.Exists(fixedPath))
+            {
+                throw new Exception("Failed to create fixed MP4 file");
+            }
+
+            Console.WriteLine($"Successfully fixed MP4 file: {fixedPath}");
+            return fixedPath;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to fix MP4 file: {ex.Message}");
+            Console.WriteLine("Falling back to original file");
+            return inputPath; // Fall back to original file
+        }
+    }
+
+    private async Task RunFfmpegCommand(string args, int timeoutSeconds = 30)
+    {
+        var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
+            ?? _configuration["FFmpeg:Path"]
+            ?? "ffmpeg";
+
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = args,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+        
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        try
+        {
+            await process.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine($"FFmpeg process timed out after {timeoutSeconds} seconds, killing...");
+            try { process.Kill(); } catch { }
+            throw new Exception($"FFmpeg process timed out after {timeoutSeconds} seconds");
+        }
+
+        var error = await process.StandardError.ReadToEndAsync();
+        var output = await process.StandardOutput.ReadToEndAsync();
+        
+        Console.WriteLine($"FFmpeg exit code: {process.ExitCode}");
+        if (!string.IsNullOrEmpty(error))
+        {
+            Console.WriteLine($"FFmpeg stderr: {error}");
+        }
+        if (!string.IsNullOrEmpty(output))
+        {
+            Console.WriteLine($"FFmpeg stdout: {output}");
+        }
+
+        if (process.ExitCode != 0)
+        {
+            throw new Exception($"FFmpeg error (exit code {process.ExitCode}): {error}");
+        }
+    }
+
+    private async Task RunFfmpeg(string args)
+    {
+        try
+        {
+            Console.WriteLine($"Running FFmpeg with args: {args}");
+            await RunFfmpegCommand(args, 60); // Use 60 second timeout for HLS generation
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
         {
@@ -338,7 +504,7 @@ public class HlsService
         catch (Exception ex)
         {
             Console.WriteLine($"Error running FFmpeg: {ex.Message}");
-            throw new Exception($"Error running FFmpeg: {ex.Message}");
+            throw;
         }
     }
 }
