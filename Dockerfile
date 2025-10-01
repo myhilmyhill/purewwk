@@ -34,10 +34,10 @@ if [ -d "/app/hls_segments" ]; then\n\
   chown -R $APP_UID:$APP_UID /app/hls_segments\n\
   chmod -R 755 /app/hls_segments\n\
 fi\n\
-# Switch to app user and execute the application\n\
-exec gosu $APP_UID "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+# Switch to app user and execute the application with any passed arguments\n\
+exec gosu $APP_UID ./repos "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Define volumes for persistent data
 VOLUME ["/app/music_index", "/app/hls_segments"]
 
-ENTRYPOINT ["/entrypoint.sh", "./repos"]
+ENTRYPOINT ["/entrypoint.sh"]
