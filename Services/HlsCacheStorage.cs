@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace repos.Services;
 
@@ -21,14 +22,16 @@ public interface IHlsCacheStorage
 
 public class HlsCacheStorage : IHlsCacheStorage
 {
+    private readonly ILogger<HlsCacheStorage> _logger;
     private readonly ConcurrentDictionary<string, HlsCacheEntry> _cache;
     private readonly Queue<string> _accessOrder; // FIFOのためのキューー
     private readonly object _lockObject = new object();
     private readonly int _maxSize;
     private readonly TimeSpan _maxAge;
 
-    public HlsCacheStorage(int maxSize, TimeSpan maxAge)
+    public HlsCacheStorage(ILogger<HlsCacheStorage> logger, int maxSize, TimeSpan maxAge)
     {
+        _logger = logger;
         _cache = new ConcurrentDictionary<string, HlsCacheEntry>();
         _accessOrder = new Queue<string>();
         _maxSize = maxSize;
@@ -49,11 +52,11 @@ public class HlsCacheStorage : IHlsCacheStorage
             }
 
             entry.LastAccessed = DateTime.Now;
-            Console.WriteLine($"HLS Cache hit for key: {key}");
+            _logger.LogDebug("HLS Cache hit for key: {Key}", key);
             return entry;
         }
 
-        Console.WriteLine($"HLS Cache miss for key: {key}");
+        _logger.LogDebug("HLS Cache miss for key: {Key}", key);
         return null;
     }
 
@@ -92,12 +95,12 @@ public class HlsCacheStorage : IHlsCacheStorage
                 {
                     // 古いキャッシュのディレクトリを削除
                     Task.Run(() => CleanupCacheDirectory(oldEntry.CacheDirectory));
-                    Console.WriteLine($"HLS Cache evicted (FIFO): {oldestKey}");
+                    _logger.LogDebug("HLS Cache evicted (FIFO): {OldestKey}", oldestKey);
                 }
             }
         }
 
-        Console.WriteLine($"HLS Cache stored: {key}");
+        _logger.LogDebug("HLS Cache stored: {Key}", key);
         await Task.CompletedTask;
     }
 
@@ -125,7 +128,7 @@ public class HlsCacheStorage : IHlsCacheStorage
 
             // キャッシュディレクトリを削除
             await Task.Run(() => CleanupCacheDirectory(entry.CacheDirectory));
-            Console.WriteLine($"HLS Cache removed: {key}");
+            _logger.LogDebug("HLS Cache removed: {Key}", key);
         }
     }
 
@@ -148,7 +151,7 @@ public class HlsCacheStorage : IHlsCacheStorage
 
         if (keysToRemove.Count > 0)
         {
-            Console.WriteLine($"HLS Cache cleanup: removed {keysToRemove.Count} expired entries");
+            _logger.LogInformation("HLS Cache cleanup: removed {Count} expired entries", keysToRemove.Count);
         }
     }
 
@@ -159,12 +162,12 @@ public class HlsCacheStorage : IHlsCacheStorage
             if (Directory.Exists(cacheDir))
             {
                 Directory.Delete(cacheDir, true);
-                Console.WriteLine($"Cleaned up cache directory: {cacheDir}");
+                _logger.LogDebug("Cleaned up cache directory: {CacheDir}", cacheDir);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error cleaning up cache directory {cacheDir}: {ex.Message}");
+            _logger.LogError(ex, "Error cleaning up cache directory {CacheDir}: {Message}", cacheDir, ex.Message);
         }
     }
 }

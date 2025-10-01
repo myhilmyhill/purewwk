@@ -6,12 +6,14 @@ using Lucene.Net.Search;
 using Lucene.Net.Util;
 using System.IO;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 
 namespace repos.Services;
 
 public class LuceneService : IDisposable
 {
+    private readonly ILogger<LuceneService> _logger;
     private readonly string _indexPath;
     private readonly Lucene.Net.Store.Directory _directory;
     private readonly Lucene.Net.Analysis.Analyzer _analyzer;
@@ -19,8 +21,9 @@ public class LuceneService : IDisposable
     private readonly LuceneVersion _version = LuceneVersion.LUCENE_48;
     private readonly string[] _musicExtensions = [".mp3", ".flac", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".wma"];
 
-    public LuceneService(IConfiguration configuration)
+    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration)
     {
+        _logger = logger;
         var workingDir = configuration["WorkingDirectory"];
         var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
         var indexPath = Path.Combine(baseDir, "music_index");
@@ -51,7 +54,7 @@ public class LuceneService : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Index validation failed: {ex.Message}");
+            _logger.LogWarning(ex, "Index validation failed: {Message}", ex.Message);
             return false;
         }
     }
@@ -60,7 +63,7 @@ public class LuceneService : IDisposable
     {
         _writer.DeleteAll();
         _writer.Commit();
-        Console.WriteLine("Index cleared");
+        _logger.LogInformation("Index cleared");
     }
 
     public void RemoveFromIndex(string path)
@@ -77,7 +80,7 @@ public class LuceneService : IDisposable
         }
         
         _writer.Commit();
-        Console.WriteLine($"Removed from index: {path}");
+        _logger.LogDebug("Removed from index: {Path}", path);
     }
 
     private bool IsMusicFile(string filePath)
@@ -141,7 +144,7 @@ public class LuceneService : IDisposable
                 }
                 else
                 {
-                    Console.WriteLine($"Skipping directory (no music files): {fullPath}");
+                    _logger.LogDebug("Skipping directory (no music files): {Path}", fullPath);
                 }
             }
             else if (File.Exists(fullPath) && IsMusicFile(fullPath))
@@ -165,15 +168,15 @@ public class LuceneService : IDisposable
             }
             else if (File.Exists(fullPath))
             {
-                Console.WriteLine($"Skipping non-music file: {fullPath}");
+                _logger.LogDebug("Skipping non-music file: {Path}", fullPath);
             }
             
             _writer.Commit();
-            Console.WriteLine($"Added/Updated in index: {fullPath}");
+            _logger.LogDebug("Added/Updated in index: {Path}", fullPath);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to add/update path in index: {fullPath}, Error: {ex.Message}");
+            _logger.LogError(ex, "Failed to add/update path in index: {Path}, Error: {Message}", fullPath, ex.Message);
         }
     }
 
@@ -228,7 +231,7 @@ public class LuceneService : IDisposable
 
     public void IndexDirectory(string dirPath, string? parentId = null)
     {
-        Console.WriteLine($"Indexing directory: {dirPath} with parentId: {parentId}");
+        _logger.LogInformation("Indexing directory: {Path} with parentId: {ParentId}", dirPath, parentId);
         var currentId = parentId ?? "/";
         if (parentId == null)
         {
@@ -252,7 +255,7 @@ public class LuceneService : IDisposable
             if (DirectoryContainsMusicFiles(subDir.FullName))
             {
                 var subDirId = $"{currentId.TrimEnd('/')}/{subDir.Name}";
-                Console.WriteLine($"Indexing subdir: {subDir.Name} id: {subDirId}");
+                _logger.LogDebug("Indexing subdir: {SubDirName} id: {SubDirId}", subDir.Name, subDirId);
                 var doc = new Document
                 {
                     new StringField("id", subDirId, Field.Store.YES),
@@ -268,7 +271,7 @@ public class LuceneService : IDisposable
             }
             else
             {
-                Console.WriteLine($"Skipping directory (no music files): {subDir.Name}");
+                _logger.LogDebug("Skipping directory (no music files): {SubDirName}", subDir.Name);
             }
         }
         foreach (var file in dirInfo.GetFiles())
@@ -277,7 +280,7 @@ public class LuceneService : IDisposable
             if (IsMusicFile(file.FullName))
             {
                 var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
-                Console.WriteLine($"Indexing music file: {file.Name} id: {fileId}");
+                _logger.LogDebug("Indexing music file: {FileName} id: {FileId}", file.Name, fileId);
                 var doc = new Document
                 {
                     new StringField("id", fileId, Field.Store.YES),
@@ -293,7 +296,7 @@ public class LuceneService : IDisposable
             }
             else
             {
-                Console.WriteLine($"Skipping non-music file: {file.Name}");
+                _logger.LogDebug("Skipping non-music file: {FileName}", file.Name);
             }
         }
         _writer.Commit();
@@ -336,7 +339,7 @@ public class LuceneService : IDisposable
         catch (IndexNotFoundException)
         {
             // Index doesn't exist yet, return empty list
-            Console.WriteLine("Index not found, returning empty result");
+            _logger.LogDebug("Index not found, returning empty result");
             return new List<Dictionary<string, string>>();
         }
     }
