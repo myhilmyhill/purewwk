@@ -2,10 +2,38 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics;
 using repos.Models;
 using repos.Services;
 
 namespace repos.Controllers;
+
+// Helper class to clean up temporary files after response is sent
+public class FileCleanupDisposable : IDisposable
+{
+    private readonly string _filePath;
+    
+    public FileCleanupDisposable(string filePath)
+    {
+        _filePath = filePath;
+    }
+    
+    public void Dispose()
+    {
+        try
+        {
+            if (File.Exists(_filePath))
+            {
+                File.Delete(_filePath);
+                Console.WriteLine($"Cleaned up temporary file: {_filePath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error cleaning up temporary file {_filePath}: {ex.Message}");
+        }
+    }
+}
 
 [ApiController]
 [Route("rest")]
@@ -109,6 +137,96 @@ public class MusicController : ControllerBase
             {
                 Console.WriteLine($"File not found on disk: {fullPath}");
                 return NotFound($"Media file not found on disk: {fullPath}");
+            }
+
+            // Check if this is a CUE track
+            bool isCueTrack = fileDoc.ContainsKey("isCueTrack") && fileDoc["isCueTrack"] == "true";
+            
+            if (isCueTrack)
+            {
+                // Extract CUE track information
+                string? startTime = fileDoc.ContainsKey("startTime") ? fileDoc["startTime"] : null;
+                string? endTime = fileDoc.ContainsKey("endTime") ? fileDoc["endTime"] : null;
+                string trackTitle = fileDoc.ContainsKey("title") ? fileDoc["title"] : "track";
+                
+                if (string.IsNullOrEmpty(startTime))
+                {
+                    return BadRequest("CUE track missing start time information");
+                }
+
+                Console.WriteLine($"Extracting CUE track: start={startTime}s, end={endTime ?? "EOF"}");
+
+                // Use FFmpeg to extract the track segment
+                var workingDir = _configuration["WorkingDirectory"];
+                var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
+                var tempDir = Path.Combine(baseDir, "temp_downloads");
+                Directory.CreateDirectory(tempDir);
+
+                // Generate a unique filename for the extracted track
+                var outputFileName = $"{Guid.NewGuid()}.mp3";
+                var outputPath = Path.Combine(tempDir, outputFileName);
+
+                try
+                {
+                    // Build FFmpeg command to extract the track
+                    var ssArg = $"-ss {startTime}";
+                    var toArg = !string.IsNullOrEmpty(endTime) ? $"-to {endTime}" : "";
+                    var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
+                        ?? _configuration["FFmpeg:Path"]
+                        ?? "ffmpeg";
+
+                    var ffmpegArgs = $"-y -v error {ssArg} {toArg} -i \"{fullPath}\" -c:a libmp3lame -q:a 2 \"{outputPath}\"";
+                    Console.WriteLine($"FFmpeg command: {ffmpegPath} {ffmpegArgs}");
+
+                    var process = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = ffmpegPath,
+                            Arguments = ffmpegArgs,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    process.Start();
+                    process.WaitForExit(30000); // 30 second timeout
+
+                    if (process.ExitCode != 0)
+                    {
+                        var error = process.StandardError.ReadToEnd();
+                        Console.WriteLine($"FFmpeg error: {error}");
+                        return StatusCode(500, $"Error extracting CUE track: {error}");
+                    }
+
+                    if (!System.IO.File.Exists(outputPath))
+                    {
+                        return StatusCode(500, "Failed to extract CUE track");
+                    }
+
+                    Console.WriteLine($"Successfully extracted CUE track to: {outputPath}");
+
+                    // Return the extracted file and schedule cleanup
+                    var downloadFileName = $"{trackTitle}.mp3";
+                    Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{downloadFileName}\"");
+
+                    // Schedule cleanup of temp file after response is sent
+                    Response.RegisterForDispose(new FileCleanupDisposable(outputPath));
+
+                    return PhysicalFile(outputPath, "audio/mpeg");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error extracting CUE track: {ex.Message}");
+                    // Clean up temp file if it exists
+                    if (System.IO.File.Exists(outputPath))
+                    {
+                        try { System.IO.File.Delete(outputPath); } catch { }
+                    }
+                    return StatusCode(500, $"Error extracting CUE track: {ex.Message}");
+                }
             }
 
             Console.WriteLine($"Serving original file: {fullPath}");
