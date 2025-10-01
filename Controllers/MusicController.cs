@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using repos.Models;
@@ -11,12 +12,14 @@ namespace repos.Controllers;
 [Route("rest")]
 public class MusicController : ControllerBase
 {
+    private readonly ILogger<MusicController> _logger;
     private readonly LuceneService _luceneService;
     private readonly HlsService _hlsService;
     private readonly IConfiguration _configuration;
 
-    public MusicController(LuceneService luceneService, HlsService hlsService, IConfiguration configuration)
+    public MusicController(ILogger<MusicController> logger, LuceneService luceneService, HlsService hlsService, IConfiguration configuration)
     {
+        _logger = logger;
         _luceneService = luceneService;
         _hlsService = hlsService;
         _configuration = configuration;
@@ -60,7 +63,7 @@ public class MusicController : ControllerBase
         try
         {
             // デバッグ情報をログに出力
-            Console.WriteLine($"HLS request received - ID: {id}, BitRate: {bitRate}");
+            _logger.LogDebug("HLS request received - ID: {Id}, BitRate: {BitRate}", id, bitRate);
 
             var playlist = await _hlsService.GenerateHlsPlaylist(id, new[] { bitRate }, audioTrack);
             Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
@@ -70,12 +73,12 @@ public class MusicController : ControllerBase
         }
         catch (FileNotFoundException ex)
         {
-            Console.WriteLine($"File not found: {ex.Message}");
+            _logger.LogWarning(ex, "File not found: {Message}", ex.Message);
             return NotFound($"Media file not found for id: {id}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error generating HLS playlist: {ex.Message}");
+            _logger.LogError(ex, "Error generating HLS playlist: {Message}", ex.Message);
             return StatusCode(500, $"Error generating HLS playlist: {ex.Message}");
         }
     }
@@ -85,7 +88,7 @@ public class MusicController : ControllerBase
     {
         try
         {
-            Console.WriteLine($"Download request received - ID: {id}");
+            _logger.LogDebug("Download request received - ID: {Id}", id);
 
             // Get file path from Lucene index (similar to HlsService logic)
             var directoryName = "/";
@@ -99,7 +102,7 @@ public class MusicController : ControllerBase
 
             if (fileDoc == null)
             {
-                Console.WriteLine($"File not found with id: {id}");
+                _logger.LogWarning("File not found with id: {Id}", id);
                 return NotFound($"Media file not found for id: {id}");
             }
 
@@ -107,11 +110,11 @@ public class MusicController : ControllerBase
 
             if (!System.IO.File.Exists(fullPath))
             {
-                Console.WriteLine($"File not found on disk: {fullPath}");
+                _logger.LogWarning("File not found on disk: {FullPath}", fullPath);
                 return NotFound($"Media file not found on disk: {fullPath}");
             }
 
-            Console.WriteLine($"Serving original file: {fullPath}");
+            _logger.LogDebug("Serving original file: {FullPath}", fullPath);
 
             // Get MIME type based on file extension
             var extension = Path.GetExtension(fullPath).ToLowerInvariant();
@@ -139,7 +142,7 @@ public class MusicController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error in download endpoint: {ex.Message}");
+            _logger.LogError(ex, "Error in download endpoint: {Message}", ex.Message);
             return StatusCode(500, $"Error downloading file: {ex.Message}");
         }
     }
@@ -150,7 +153,7 @@ public class MusicController : ControllerBase
     {
         try
         {
-            Console.WriteLine($"(LEGACY) Looking for HLS segment - CacheKey: {cacheKey}, Path: {path}");
+            _logger.LogDebug("(LEGACY) Looking for HLS segment - CacheKey: {CacheKey}, Path: {Path}", cacheKey, path);
 
             // Use the same directory structure as HlsService
             var workingDir = _configuration["WorkingDirectory"];
@@ -162,7 +165,7 @@ public class MusicController : ControllerBase
 
             if (!Directory.Exists(hlsSegmentsDir))
             {
-                Console.WriteLine($"HLS segments directory not found: {hlsSegmentsDir}");
+                _logger.LogWarning("HLS segments directory not found: {HlsSegmentsDir}", hlsSegmentsDir);
                 return NotFound($"HLS segments directory not found");
             }
 
@@ -170,26 +173,26 @@ public class MusicController : ControllerBase
             var targetDir = Path.Combine(hlsSegmentsDir, cacheKey); // legacy layout
             if (!Directory.Exists(targetDir))
             {
-                Console.WriteLine($"Cache directory not found for cacheKey: {cacheKey}");
+                _logger.LogWarning("Cache directory not found for cacheKey: {CacheKey}", cacheKey);
                 return NotFound($"Cache directory not found");
             }
 
             var fileName = Path.GetFileName(path);
             var segmentPathFinal = Path.Combine(targetDir, fileName);
-            Console.WriteLine($"Checking segment path: {segmentPathFinal}");
+            _logger.LogDebug("Checking segment path: {SegmentPathFinal}", segmentPathFinal);
             if (System.IO.File.Exists(segmentPathFinal))
             {
-                Console.WriteLine($"Found segment file: {segmentPathFinal}");
+                _logger.LogDebug("Found segment file: {SegmentPathFinal}", segmentPathFinal);
                 var contentType = fileName.EndsWith(".ts") ? "video/MP2T" : "application/vnd.apple.mpegurl";
                 return PhysicalFile(segmentPathFinal, contentType);
             }
 
-            Console.WriteLine($"Segment not found: {fileName} in cacheKey: {cacheKey}");
+            _logger.LogWarning("Segment not found: {FileName} in cacheKey: {CacheKey}", fileName, cacheKey);
             return NotFound($"Segment not found: {fileName}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error serving HLS segment: {ex.Message}");
+            _logger.LogError(ex, "Error serving HLS segment: {Message}", ex.Message);
             return StatusCode(500, $"Error serving segment: {ex.Message}");
         }
     }
@@ -200,7 +203,7 @@ public class MusicController : ControllerBase
     {
         try
         {
-            Console.WriteLine($"Looking for HLS segment (hierarchical) - Rel: {rel}");
+            _logger.LogDebug("Looking for HLS segment (hierarchical) - Rel: {Rel}", rel);
             var workingDir = _configuration["WorkingDirectory"];
             var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
             var hlsSegmentsDir = Path.Combine(baseDir, "hls_segments");
@@ -212,13 +215,13 @@ public class MusicController : ControllerBase
             var fullPath = Path.GetFullPath(Path.Combine(hlsSegmentsDir, rel.Replace('\\', '/')));
             if (!fullPath.StartsWith(fullBase, StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("Rejected path traversal attempt: " + rel);
+                _logger.LogWarning("Rejected path traversal attempt: {Rel}", rel);
                 return Forbid();
             }
 
             if (!System.IO.File.Exists(fullPath))
             {
-                Console.WriteLine($"Hierarchical segment not found: {fullPath}");
+                _logger.LogDebug("Hierarchical segment not found: {FullPath}", fullPath);
                 return NotFound();
             }
 
@@ -228,7 +231,7 @@ public class MusicController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error serving hierarchical HLS segment: {ex.Message}");
+            _logger.LogError(ex, "Error serving hierarchical HLS segment: {Message}", ex.Message);
             return StatusCode(500, $"Error serving segment: {ex.Message}");
         }
     }

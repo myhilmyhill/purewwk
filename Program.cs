@@ -14,9 +14,10 @@ builder.Services.AddSingleton<FileWatcherService>();
 builder.Services.AddSingleton<IHlsCacheStorage>(provider =>
 {
     var config = provider.GetRequiredService<IConfiguration>();
+    var logger = provider.GetRequiredService<ILogger<HlsCacheStorage>>();
     var maxSize = config.GetValue<int>("HlsCache:MaxSize", 100);
     var maxAgeMinutes = config.GetValue<int>("HlsCache:MaxAgeMinutes", 60);
-    return new HlsCacheStorage(maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
+    return new HlsCacheStorage(logger, maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
 });
 builder.Services.AddSingleton<HlsService>();
 
@@ -32,6 +33,7 @@ var app = builder.Build();
 var luceneService = app.Services.GetRequiredService<LuceneService>();
 var fileWatcherService = app.Services.GetRequiredService<FileWatcherService>();
 var hlsService = app.Services.GetRequiredService<HlsService>();
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
 _ = Task.Run(() =>
 {
@@ -39,12 +41,12 @@ _ = Task.Run(() =>
     {
         if (!luceneService.IsIndexValid())
         {
-            Console.WriteLine("Index not found or invalid. Creating new index...");
+            logger.LogInformation("Index not found or invalid. Creating new index...");
             luceneService.IndexDirectory(musicDir);
         }
         else
         {
-            Console.WriteLine("Valid index found. Skipping indexing.");
+            logger.LogInformation("Valid index found. Skipping indexing.");
         }
     }
 });

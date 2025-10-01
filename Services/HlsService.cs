@@ -2,12 +2,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Http;
 
 namespace repos.Services;
 
 public class HlsService
 {
+    private readonly ILogger<HlsService> _logger;
     private readonly IConfiguration _configuration;
     private readonly LuceneService _luceneService;
     private readonly IHttpContextAccessor _httpContextAccessor;
@@ -16,8 +18,9 @@ public class HlsService
     private readonly bool _losslessEncodingEnabled;
     private readonly string[] _losslessFormats;
 
-    public HlsService(IConfiguration configuration, LuceneService luceneService, IHttpContextAccessor httpContextAccessor, IHlsCacheStorage cacheStorage)
+    public HlsService(ILogger<HlsService> logger, IConfiguration configuration, LuceneService luceneService, IHttpContextAccessor httpContextAccessor, IHlsCacheStorage cacheStorage)
     {
+        _logger = logger;
         _configuration = configuration;
         _luceneService = luceneService;
         _httpContextAccessor = httpContextAccessor;
@@ -41,13 +44,13 @@ public class HlsService
             var cachedEntry = await _cacheStorage.GetAsync(hierarchicalKey);
             if (cachedEntry != null && Directory.Exists(cachedEntry.CacheDirectory))
             {
-                Console.WriteLine($"Returning cached HLS playlist for hierarchical key: {hierarchicalKey}");
+                _logger.LogDebug("Returning cached HLS playlist for hierarchical key: {HierarchicalKey}", hierarchicalKey);
                 return cachedEntry.Content;
             }
         }
 
         // Get file path from Lucene index
-        Console.WriteLine($"Looking for file with id: {id}");
+        _logger.LogDebug("Looking for file with id: {Id}", id);
 
         // Fix directory path handling - use Unix-style paths for consistency with Lucene index
         var directoryName = "/";
@@ -55,20 +58,20 @@ public class HlsService
         {
             directoryName = id.Substring(0, id.LastIndexOf("/"));
         }
-        Console.WriteLine($"Directory name: {directoryName}");
+        _logger.LogDebug("Directory name: {DirectoryName}", directoryName);
 
         var children = _luceneService.GetChildren(directoryName);
-        Console.WriteLine($"Found {children.Count()} children in directory");
+        _logger.LogDebug("Found {Count} children in directory", children.Count());
 
         var fileDoc = children.FirstOrDefault(c => c["id"] == id && c["isDir"] == "false");
-        Console.WriteLine($"Found file doc: {fileDoc != null}");
+        _logger.LogDebug("Found file doc: {FileDocFound}", fileDoc != null);
 
         if (fileDoc == null)
         {
             // デバッグ: 利用可能なファイルをすべて表示
             foreach (var child in children.Where(c => c["isDir"] == "false"))
             {
-                Console.WriteLine($"Available file: id='{child["id"]}', title='{child["title"]}'");
+                _logger.LogDebug("Available file: id='{Id}', title='{Title}'", child["id"], child["title"]);
             }
             throw new FileNotFoundException("Media file not found");
         }
@@ -98,7 +101,7 @@ public class HlsService
         
         // すべてのファイルを直接処理（ロスレス変換をスキップ）
         string inputFileForHls = fullPath;
-        Console.WriteLine($"Using file directly for HLS processing: {fullPath}");
+        _logger.LogDebug("Using file directly for HLS processing: {FullPath}", fullPath);
 
         // FFmpeg command for HLS - use first bitrate if provided, otherwise use default
         string ffmpegArgs;
@@ -106,15 +109,15 @@ public class HlsService
         {
             var bitRate = bitRates[0]; // Use only the first bitrate
             ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-            Console.WriteLine($"Using single bitrate: {bitRate}k");
+            _logger.LogDebug("Using single bitrate: {BitRate}k", bitRate);
         }
         else
         {
             ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-            Console.WriteLine("Using default bitrate");
+            _logger.LogDebug("Using default bitrate");
         }
 
-        Console.WriteLine($"FFmpeg HLS command: ffmpeg {ffmpegArgs}");
+        _logger.LogDebug("FFmpeg HLS command: ffmpeg {FfmpegArgs}", ffmpegArgs);
 
         // Run FFmpeg in background and wait for first segment
         var ffmpegTask = RunFfmpegInBackground(ffmpegArgs, cacheDir);
@@ -128,15 +131,15 @@ public class HlsService
         var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}"; // 実際の HTTP パス（/rest/hls/ の後ろ）
         var fullSegmentUrl = $"{baseUrl}{urlRelativePath}/segment_";
         
-        Console.WriteLine($"Base URL: {baseUrl}");
-        Console.WriteLine($"URL Relative Path: {urlRelativePath}");
-        Console.WriteLine($"Full Segment URL prefix: {fullSegmentUrl}");
-        Console.WriteLine($"Original playlist content preview: {playlistContent.Substring(0, Math.Min(200, playlistContent.Length))}");
+        _logger.LogDebug("Base URL: {BaseUrl}", baseUrl);
+        _logger.LogDebug("URL Relative Path: {UrlRelativePath}", urlRelativePath);
+        _logger.LogDebug("Full Segment URL prefix: {FullSegmentUrl}", fullSegmentUrl);
+        _logger.LogDebug("Original playlist content preview: {PlaylistPreview}", playlistContent.Substring(0, Math.Min(200, playlistContent.Length)));
         
         playlistContent = playlistContent.Replace("segment_", fullSegmentUrl);
         await File.WriteAllTextAsync(playlistPath, playlistContent);
         
-        Console.WriteLine($"Updated playlist content preview: {playlistContent.Substring(0, Math.Min(200, playlistContent.Length))}");
+        _logger.LogDebug("Updated playlist content preview: {PlaylistPreview}", playlistContent.Substring(0, Math.Min(200, playlistContent.Length)));
 
         // Continue FFmpeg processing in background (don't await)
         _ = Task.Run(async () =>
@@ -144,7 +147,7 @@ public class HlsService
             try
             {
                 await ffmpegTask;
-                Console.WriteLine("FFmpeg background conversion completed");
+                _logger.LogInformation("FFmpeg background conversion completed");
                 
                 // Final playlist update after completion
                 if (File.Exists(playlistPath))
@@ -168,13 +171,13 @@ public class HlsService
                         };
 
                         await _cacheStorage.SetAsync(hierarchicalKey, finalCacheEntry);
-                        Console.WriteLine("Updated final HLS cache after completion");
+                        _logger.LogDebug("Updated final HLS cache after completion");
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"FFmpeg background conversion failed: {ex.Message}");
+                _logger.LogError(ex, "FFmpeg background conversion failed: {Message}", ex.Message);
             }
         });
 
@@ -193,7 +196,7 @@ public class HlsService
             };
 
             await _cacheStorage.SetAsync(hierarchicalKey, cacheEntry);
-            Console.WriteLine($"Stored HLS playlist in cache with key: {hierarchicalKey}");
+            _logger.LogDebug("Stored HLS playlist in cache with key: {HierarchicalKey}", hierarchicalKey);
         }
 
         return playlistContent;
@@ -236,7 +239,7 @@ public class HlsService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error in HLS cache cleanup: {ex.Message}");
+                    _logger.LogError(ex, "Error in HLS cache cleanup: {Message}", ex.Message);
                     await Task.Delay(TimeSpan.FromMinutes(10)); // エラー時は10分待つ
                 }
             }
@@ -264,27 +267,27 @@ public class HlsService
         // エンコード済みファイルが既に存在する場合はそれを使用
         if (File.Exists(encodedPath))
         {
-            Console.WriteLine($"Using existing encoded file: {encodedPath}");
+            _logger.LogDebug("Using existing encoded file: {EncodedPath}", encodedPath);
             return encodedPath;
         }
 
-        Console.WriteLine($"Encoding lossless file to {targetFormat}: {inputPath} -> {encodedPath}");
+        _logger.LogInformation("Encoding lossless file to {TargetFormat}: {InputPath} -> {EncodedPath}", targetFormat, inputPath, encodedPath);
 
         // サンプルレートの処理：nullの場合は元ファイルのサンプルレートを維持（-arオプションを省略）
         string sampleRateArgs = "";
         if (!string.IsNullOrEmpty(sampleRateConfig))
         {
             sampleRateArgs = $" -ar {sampleRateConfig}";
-            Console.WriteLine($"Using configured sample rate: {sampleRateConfig}");
+            _logger.LogDebug("Using configured sample rate: {SampleRate}", sampleRateConfig);
         }
         else
         {
-            Console.WriteLine("Sample rate not specified - maintaining original sample rate");
+            _logger.LogDebug("Sample rate not specified - maintaining original sample rate");
         }
 
         var ffmpegArgs = $"-y -v error -i \"{inputPath}\" -c:a {audioCodec} -b:a {audioBitrate}{sampleRateArgs} \"{encodedPath}\"";
 
-        Console.WriteLine($"Encoding command: ffmpeg {ffmpegArgs}");
+        _logger.LogDebug("Encoding command: ffmpeg {FfmpegArgs}", ffmpegArgs);
 
         await RunFfmpeg(ffmpegArgs);
 
@@ -293,7 +296,7 @@ public class HlsService
             throw new Exception($"Failed to encode lossless file: {inputPath}");
         }
 
-        Console.WriteLine($"Successfully encoded lossless file: {encodedPath}");
+        _logger.LogInformation("Successfully encoded lossless file: {EncodedPath}", encodedPath);
         return encodedPath;
     }
 
@@ -310,7 +313,7 @@ public class HlsService
             var pathBase = request.PathBase.Value; // for apps deployed in subdirectories
 
             var baseUrl = $"{scheme}://{host}{pathBase}/rest/hls/";
-            Console.WriteLine($"Auto-detected base URL: {baseUrl}");
+            _logger.LogDebug("Auto-detected base URL: {BaseUrl}", baseUrl);
             return baseUrl;
         }
 
@@ -318,13 +321,13 @@ public class HlsService
         var configUrl = _configuration["Hls:BaseUrl"];
         if (!string.IsNullOrEmpty(configUrl))
         {
-            Console.WriteLine($"Using configured base URL: {configUrl}");
+            _logger.LogDebug("Using configured base URL: {ConfigUrl}", configUrl);
             return configUrl;
         }
 
         // Final fallback
         var fallbackUrl = "http://localhost:5095/rest/hls/";
-        Console.WriteLine($"Using fallback base URL: {fallbackUrl}");
+        _logger.LogDebug("Using fallback base URL: {FallbackUrl}", fallbackUrl);
         return fallbackUrl;
     }
 
@@ -339,8 +342,8 @@ public class HlsService
                 ?? _configuration["FFmpeg:Path"]
                 ?? "ffmpeg";
 
-            Console.WriteLine($"Starting FFmpeg in background from path: {ffmpegPath}");
-            Console.WriteLine($"FFmpeg args: {args}");
+            _logger.LogDebug("Starting FFmpeg in background from path: {FfmpegPath}", ffmpegPath);
+            _logger.LogDebug("FFmpeg args: {Args}", args);
 
             var process = new Process
             {
@@ -367,37 +370,37 @@ public class HlsService
                 }
                 catch (OperationCanceledException)
                 {
-                    Console.WriteLine("FFmpeg background process timed out, killing...");
+                    _logger.LogWarning("FFmpeg background process timed out, killing...");
                     process.Kill();
                     throw new Exception("FFmpeg background process timed out after 10 minutes");
                 }
             }
 
-            Console.WriteLine($"FFmpeg background process finished with exit code: {process.ExitCode}");
+            _logger.LogDebug("FFmpeg background process finished with exit code: {ExitCode}", process.ExitCode);
 
             if (process.ExitCode != 0)
             {
                 var error = await process.StandardError.ReadToEndAsync();
                 var output = await process.StandardOutput.ReadToEndAsync();
-                Console.WriteLine($"FFmpeg background stderr: {error}");
-                Console.WriteLine($"FFmpeg background stdout: {output}");
+                _logger.LogError("FFmpeg background stderr: {Error}", error);
+                _logger.LogError("FFmpeg background stdout: {Output}", output);
                 // Don't throw exception for background process - just log the error
-                Console.WriteLine($"FFmpeg background error (exit code {process.ExitCode}): {error}");
+                _logger.LogError("FFmpeg background error (exit code {ExitCode}): {Error}", process.ExitCode, error);
             }
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
         {
-            Console.WriteLine("FFmpeg is not installed or not found in PATH for background processing.");
+            _logger.LogError("FFmpeg is not installed or not found in PATH for background processing");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error running FFmpeg in background: {ex.Message}");
+            _logger.LogError(ex, "Error running FFmpeg in background: {Message}", ex.Message);
         }
     }
 
     private async Task WaitForFirstSegment(string cacheDir, string playlistPath)
     {
-        Console.WriteLine($"Waiting for first HLS segment in directory: {cacheDir}");
+        _logger.LogDebug("Waiting for first HLS segment in directory: {CacheDir}", cacheDir);
         
         var timeout = TimeSpan.FromSeconds(30);
         var startTime = DateTime.Now;
@@ -417,14 +420,14 @@ public class HlsService
                         var firstSegmentPath = Path.Combine(cacheDir, "segment_000.ts");
                         if (File.Exists(firstSegmentPath) && new FileInfo(firstSegmentPath).Length > 0)
                         {
-                            Console.WriteLine($"First segment created: {firstSegmentPath}");
+                            _logger.LogDebug("First segment created: {FirstSegmentPath}", firstSegmentPath);
                             return;
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error reading playlist while waiting: {ex.Message}");
+                    _logger.LogWarning(ex, "Error reading playlist while waiting: {Message}", ex.Message);
                 }
             }
 
@@ -446,8 +449,8 @@ public class HlsService
                 ?? _configuration["FFmpeg:Path"]
                 ?? "ffmpeg";
 
-            Console.WriteLine($"Starting FFmpeg from path: {ffmpegPath}");
-            Console.WriteLine($"FFmpeg args: {args}");
+            _logger.LogDebug("Starting FFmpeg from path: {FfmpegPath}", ffmpegPath);
+            _logger.LogDebug("FFmpeg args: {Args}", args);
 
             var process = new Process
             {
@@ -474,20 +477,20 @@ public class HlsService
                 }
                 catch (OperationCanceledException)
                 {
-                    Console.WriteLine("FFmpeg process timed out, killing...");
+                    _logger.LogWarning("FFmpeg process timed out, killing...");
                     process.Kill();
                     throw new Exception("FFmpeg process timed out after 30 seconds");
                 }
             }
 
-            Console.WriteLine($"FFmpeg finished with exit code: {process.ExitCode}");
+            _logger.LogDebug("FFmpeg finished with exit code: {ExitCode}", process.ExitCode);
 
             if (process.ExitCode != 0)
             {
                 var error = await process.StandardError.ReadToEndAsync();
                 var output = await process.StandardOutput.ReadToEndAsync();
-                Console.WriteLine($"FFmpeg stderr: {error}");
-                Console.WriteLine($"FFmpeg stdout: {output}");
+                _logger.LogError("FFmpeg stderr: {Error}", error);
+                _logger.LogError("FFmpeg stdout: {Output}", output);
                 throw new Exception($"FFmpeg error (exit code {process.ExitCode}): {error}");
             }
         }
@@ -497,7 +500,7 @@ public class HlsService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error running FFmpeg: {ex.Message}");
+            _logger.LogError(ex, "Error running FFmpeg: {Message}", ex.Message);
             throw new Exception($"Error running FFmpeg: {ex.Message}");
         }
     }
