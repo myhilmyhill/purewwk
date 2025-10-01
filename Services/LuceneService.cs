@@ -75,6 +75,12 @@ public class LuceneService : IDisposable
             var prefixQuery = new PrefixQuery(new Term("path", path + Path.DirectorySeparatorChar));
             _writer.DeleteDocuments(prefixQuery);
         }
+        // CUEファイルの場合、cueFileフィールドに該当パスを持つすべてのトラックを削除
+        else if (IsCueFile(path))
+        {
+            var cueQuery = new TermQuery(new Term("cueFile", path));
+            _writer.DeleteDocuments(cueQuery);
+        }
         
         _writer.Commit();
         Console.WriteLine($"Removed from index: {path}");
