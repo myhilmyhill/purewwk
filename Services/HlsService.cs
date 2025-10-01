@@ -136,8 +136,8 @@ public class HlsService
         _logger.LogDebug("Full Segment URL prefix: {FullSegmentUrl}", fullSegmentUrl);
         _logger.LogDebug("Original playlist content preview: {PlaylistPreview}", playlistContent.Substring(0, Math.Min(200, playlistContent.Length)));
         
+        // Replace segment references with full URLs (in memory only, don't write back to file)
         playlistContent = playlistContent.Replace("segment_", fullSegmentUrl);
-        await File.WriteAllTextAsync(playlistPath, playlistContent);
         
         _logger.LogDebug("Updated playlist content preview: {PlaylistPreview}", playlistContent.Substring(0, Math.Min(200, playlistContent.Length)));
 
@@ -149,30 +149,23 @@ public class HlsService
                 await ffmpegTask;
                 _logger.LogInformation("FFmpeg background conversion completed");
                 
-                // Final playlist update after completion
-                if (File.Exists(playlistPath))
+                // Update cache with final playlist after completion
+                if (_cacheEnabled && File.Exists(playlistPath))
                 {
                     var finalPlaylistContent = await File.ReadAllTextAsync(playlistPath);
-                    if (!finalPlaylistContent.Contains(baseUrl))
+                    // Replace segment references with full URLs for cache (in memory only)
+                    var finalPlaylistWithUrls = finalPlaylistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
+                    
+                    var finalCacheEntry = new HlsCacheEntry
                     {
-                        finalPlaylistContent = finalPlaylistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
-                        await File.WriteAllTextAsync(playlistPath, finalPlaylistContent);
-                    }
+                        Content = finalPlaylistWithUrls,
+                        CacheDirectory = cacheDir,
+                        CreatedAt = DateTime.Now,
+                        LastAccessed = DateTime.Now
+                    };
 
-                    // Update final cache
-                    if (_cacheEnabled)
-                    {
-                        var finalCacheEntry = new HlsCacheEntry
-                        {
-                            Content = finalPlaylistContent,
-                            CacheDirectory = cacheDir,
-                            CreatedAt = DateTime.Now,
-                            LastAccessed = DateTime.Now
-                        };
-
-                        await _cacheStorage.SetAsync(hierarchicalKey, finalCacheEntry);
-                        _logger.LogDebug("Updated final HLS cache after completion");
-                    }
+                    await _cacheStorage.SetAsync(hierarchicalKey, finalCacheEntry);
+                    _logger.LogDebug("Updated final HLS cache after FFmpeg completion");
                 }
             }
             catch (Exception ex)
@@ -180,9 +173,6 @@ public class HlsService
                 _logger.LogError(ex, "FFmpeg background conversion failed: {Message}", ex.Message);
             }
         });
-
-        // Read playlist
-        playlistContent = await File.ReadAllTextAsync(playlistPath);
 
         // キャッシュが有効な場合はキャッシュに保存
         if (_cacheEnabled)
