@@ -79,6 +79,11 @@ public class HlsService
             throw new FileNotFoundException("Media file not found on disk");
         }
 
+        // Check if this is a CUE track
+        bool isCueTrack = fileDoc.ContainsKey("isCueTrack") && fileDoc["isCueTrack"] == "true";
+        string? startTime = isCueTrack && fileDoc.ContainsKey("startTime") ? fileDoc["startTime"] : null;
+        string? endTime = isCueTrack && fileDoc.ContainsKey("endTime") ? fileDoc["endTime"] : null;
+
         // Create directory for HLS segments in working directory
         var workingDir = _configuration["WorkingDirectory"];
         var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
@@ -105,12 +110,35 @@ public class HlsService
         if (bitRates.Length > 0)
         {
             var bitRate = bitRates[0]; // Use only the first bitrate
-            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            
+            // If this is a CUE track, add time segment parameters
+            if (isCueTrack && !string.IsNullOrEmpty(startTime))
+            {
+                var ssArg = $"-ss {startTime}";
+                var toArg = !string.IsNullOrEmpty(endTime) ? $"-to {endTime}" : "";
+                ffmpegArgs = $"-y -v error {ssArg} {toArg} -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+                Console.WriteLine($"Using CUE track with start: {startTime}s, end: {endTime ?? "EOF"}");
+            }
+            else
+            {
+                ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            }
             Console.WriteLine($"Using single bitrate: {bitRate}k");
         }
         else
         {
-            ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            // If this is a CUE track, add time segment parameters
+            if (isCueTrack && !string.IsNullOrEmpty(startTime))
+            {
+                var ssArg = $"-ss {startTime}";
+                var toArg = !string.IsNullOrEmpty(endTime) ? $"-to {endTime}" : "";
+                ffmpegArgs = $"-y -v error {ssArg} {toArg} -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+                Console.WriteLine($"Using CUE track with start: {startTime}s, end: {endTime ?? "EOF"}");
+            }
+            else
+            {
+                ffmpegArgs = $"-y -v error -i \"{inputFileForHls}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            }
             Console.WriteLine("Using default bitrate");
         }
 
