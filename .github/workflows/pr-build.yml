@@ -25,4 +25,4 @@ jobs:
       run: dotnet build --no-restore --configuration Release
 
     - name: Build Docker image
-      run: docker build -t purewwk:pr-${{ github.event.pull_request.number }} .
+      run: docker build -t ${{ github.event.repository.name }}:pr-${{ github.event.pull_request.number }} .
