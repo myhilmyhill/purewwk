@@ -35,14 +35,47 @@ public class HlsService
         var variantKey = BuildVariantKey(bitRates, audioTrack); // 例: 128_default
         var hierarchicalKey = $"{relativeId}|{variantKey}"; // キャッシュ辞書用の内部キー
 
-        // キャッシュヒット時はそのまま返す
+        // Get base URL from current request (needed for both cache hit and miss)
+        var baseUrl = GetBaseUrl();
+        var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}";
+        var fullSegmentUrl = $"{baseUrl}{urlRelativePath}/segment_";
+
+        // キャッシュヒット時は、ディスクから最新のプレイリストを読み込む
         if (_cacheEnabled)
         {
             var cachedEntry = await _cacheStorage.GetAsync(hierarchicalKey);
             if (cachedEntry != null && Directory.Exists(cachedEntry.CacheDirectory))
             {
-                Console.WriteLine($"Returning cached HLS playlist for hierarchical key: {hierarchicalKey}");
-                return cachedEntry.Content;
+                Console.WriteLine($"Cache hit for hierarchical key: {hierarchicalKey}");
+                
+                // プレイリストファイルが存在する場合は、最新の内容を読み込む
+                var cachedPlaylistPath = Path.Combine(cachedEntry.CacheDirectory, "playlist.m3u8");
+                if (File.Exists(cachedPlaylistPath))
+                {
+                    Console.WriteLine($"Reading latest playlist from disk: {cachedPlaylistPath}");
+                    var latestPlaylistContent = await File.ReadAllTextAsync(cachedPlaylistPath);
+                    
+                    // URLが含まれていない場合は追加
+                    if (!latestPlaylistContent.Contains(baseUrl))
+                    {
+                        latestPlaylistContent = latestPlaylistContent.Replace("segment_", fullSegmentUrl);
+                        Console.WriteLine($"Updated playlist URLs for cached entry");
+                    }
+                    
+                    // キャッシュを最新の内容で更新
+                    cachedEntry.Content = latestPlaylistContent;
+                    cachedEntry.LastAccessed = DateTime.Now;
+                    await _cacheStorage.SetAsync(hierarchicalKey, cachedEntry);
+                    
+                    Console.WriteLine($"Returning updated cached HLS playlist for hierarchical key: {hierarchicalKey}");
+                    return latestPlaylistContent;
+                }
+                else
+                {
+                    Console.WriteLine($"Playlist file not found in cache directory, will regenerate");
+                    // プレイリストファイルが存在しない場合はキャッシュを削除
+                    await _cacheStorage.RemoveAsync(hierarchicalKey);
+                }
             }
         }
 
@@ -88,9 +121,6 @@ public class HlsService
 
         var playlistPath = Path.Combine(cacheDir, "playlist.m3u8");
 
-        // Get base URL from current request
-        var baseUrl = GetBaseUrl();
-
         // Clean up the id to avoid double slashes
         var cleanId = id.TrimStart('/');
 
@@ -125,8 +155,6 @@ public class HlsService
         // Read and update playlist content
         // 新方式: /rest/hls/path/<relativeId>/<variantKey>/segment_XXX.ts という URL に書き換え
         var playlistContent = await File.ReadAllTextAsync(playlistPath);
-        var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}"; // 実際の HTTP パス（/rest/hls/ の後ろ）
-        var fullSegmentUrl = $"{baseUrl}{urlRelativePath}/segment_";
         
         Console.WriteLine($"Base URL: {baseUrl}");
         Console.WriteLine($"URL Relative Path: {urlRelativePath}");
