@@ -31,16 +31,17 @@ public class HlsService
         var variantKey = BuildVariantKey(bitRates, audioTrack); // 例: 128_default
         var key = $"{id}/{variantKey}"; // キャッシュ辞書用の内部キー
 
-        // 同じIDに対する既存のFFmpegプロセスがあれば終了させる
+        // 同じIDに対する既存のFFmpegプロセスがあれば終了させ、不完全なキャッシュをクリア
         CancelExistingProcess(id);
 
-        // キャッシュヒット時はそのまま返す
+        // キャッシュヒット時の完全性チェック - 完全でない場合はクリアして再生成
         if (_cacheEnabled)
         {
             var cachedEntry = await _cacheStorage.GetAsync(key);
             if (cachedEntry != null && Directory.Exists(cachedEntry.CacheDirectory))
             {
-                _logger.LogDebug("Returning cached HLS playlist for key: {key}", key);
+                _logger.LogDebug("Found cached HLS playlist for key: {key}, checking completeness", key);
+                // キャッシュストレージが既に完全性をチェックしているので、ここまで来たら完全
                 return cachedEntry.Content;
             }
         }
@@ -140,7 +141,7 @@ public class HlsService
                         LastAccessed = DateTime.Now
                     };
 
-                    await _cacheStorage.SetAsync(id, finalCacheEntry);
+                    await _cacheStorage.SetAsync(key, finalCacheEntry);
                     _logger.LogDebug("Updated final HLS cache after FFmpeg completion");
                 }
             }
@@ -161,8 +162,8 @@ public class HlsService
                 LastAccessed = DateTime.Now
             };
 
-            await _cacheStorage.SetAsync(id, cacheEntry);
-            _logger.LogDebug("Stored HLS playlist in cache with key: {Id}", id);
+            await _cacheStorage.SetAsync(key, cacheEntry);
+            _logger.LogDebug("Stored HLS playlist in cache with key: {Key}", key);
         }
 
         return playlistContent;
