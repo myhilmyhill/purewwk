@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Http;
+using System.Net.Sockets;
 
 namespace repos.Services;
 
@@ -34,17 +35,16 @@ public class HlsService
     public async Task<string> GenerateHlsPlaylist(string id, int[] bitRates, string? audioTrack)
     {
         // 相対パス（id 先頭の / を除去）
-        var relativeId = id.TrimStart('/');
         var variantKey = BuildVariantKey(bitRates, audioTrack); // 例: 128_default
-        var hierarchicalKey = $"{relativeId}|{variantKey}"; // キャッシュ辞書用の内部キー
+        var key = $"{id}/{variantKey}"; // キャッシュ辞書用の内部キー
 
         // キャッシュヒット時はそのまま返す
         if (_cacheEnabled)
         {
-            var cachedEntry = await _cacheStorage.GetAsync(hierarchicalKey);
+            var cachedEntry = await _cacheStorage.GetAsync(key);
             if (cachedEntry != null && Directory.Exists(cachedEntry.CacheDirectory))
             {
-                _logger.LogDebug("Returning cached HLS playlist for hierarchical key: {HierarchicalKey}", hierarchicalKey);
+                _logger.LogDebug("Returning cached HLS playlist for key: {key}", key);
                 return cachedEntry.Content;
             }
         }
@@ -53,11 +53,7 @@ public class HlsService
         _logger.LogDebug("Looking for file with id: {Id}", id);
 
         // Fix directory path handling - use Unix-style paths for consistency with Lucene index
-        var directoryName = "/";
-        if (id.Contains("/") && id.LastIndexOf("/") > 0)
-        {
-            directoryName = id.Substring(0, id.LastIndexOf("/"));
-        }
+        var directoryName = id.Contains('/') ? string.Join('/', id.Split('/').SkipLast(1)) : "/";
         _logger.LogDebug("Directory name: {DirectoryName}", directoryName);
 
         var children = _luceneService.GetChildren(directoryName);
@@ -73,32 +69,23 @@ public class HlsService
             {
                 _logger.LogDebug("Available file: id='{Id}', title='{Title}'", child["id"], child["title"]);
             }
-            throw new FileNotFoundException("Media file not found");
+            throw new FileNotFoundException("Media file not found: " + id);
         }
         var fullPath = fileDoc["path"];
 
         if (!File.Exists(fullPath))
         {
-            throw new FileNotFoundException("Media file not found on disk");
+            throw new FileNotFoundException("Media file not found on disk: " + fullPath);
         }
 
         // Create directory for HLS segments in working directory
-        var workingDir = _configuration["WorkingDirectory"];
-        var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
-        // ディレクトリ構造: hls_segments/<relativeId>/<variantKey>/
-        var cacheDir = Path.Combine(baseDir, "hls_segments", NormalizeRelativePath(relativeId), variantKey);
+        string workingDir = string.IsNullOrEmpty(_configuration["WorkingDirectory"]) ? AppContext.BaseDirectory : _configuration["WorkingDirectory"] ?? AppContext.BaseDirectory;
+        var cacheDir = Path.Combine(workingDir, $"hls_segments{key}");
         Directory.CreateDirectory(cacheDir);
+        _logger.LogDebug("HLS cache directory: {CacheDir}", cacheDir);
 
         var playlistPath = Path.Combine(cacheDir, "playlist.m3u8");
 
-        // Get base URL from current request
-        var baseUrl = GetBaseUrl();
-
-        // Clean up the id to avoid double slashes
-        var cleanId = id.TrimStart('/');
-
-
-        
         // すべてのファイルを直接処理（ロスレス変換をスキップ）
         string inputFileForHls = fullPath;
         _logger.LogDebug("Using file directly for HLS processing: {FullPath}", fullPath);
@@ -128,11 +115,10 @@ public class HlsService
         // Read and update playlist content
         // 新方式: /rest/hls/path/<relativeId>/<variantKey>/segment_XXX.ts という URL に書き換え
         var playlistContent = await File.ReadAllTextAsync(playlistPath);
-        var urlRelativePath = $"path/{EscapeUrlPath(relativeId)}/{variantKey}"; // 実際の HTTP パス（/rest/hls/ の後ろ）
-        var fullSegmentUrl = $"{baseUrl}{urlRelativePath}/segment_";
+        var baseUrl = GetBaseUrl();
+        var fullSegmentUrl = $"{baseUrl}{key}/segment_";
         
         _logger.LogDebug("Base URL: {BaseUrl}", baseUrl);
-        _logger.LogDebug("URL Relative Path: {UrlRelativePath}", urlRelativePath);
         _logger.LogDebug("Full Segment URL prefix: {FullSegmentUrl}", fullSegmentUrl);
         _logger.LogDebug("Original playlist content preview: {PlaylistPreview}", playlistContent.Substring(0, Math.Min(200, playlistContent.Length)));
         
@@ -154,7 +140,7 @@ public class HlsService
                 {
                     var finalPlaylistContent = await File.ReadAllTextAsync(playlistPath);
                     // Replace segment references with full URLs for cache (in memory only)
-                    var finalPlaylistWithUrls = finalPlaylistContent.Replace("segment_", $"{baseUrl}{urlRelativePath}/segment_");
+                    var finalPlaylistWithUrls = finalPlaylistContent.Replace("segment_", fullSegmentUrl);
                     
                     var finalCacheEntry = new HlsCacheEntry
                     {
@@ -164,7 +150,7 @@ public class HlsService
                         LastAccessed = DateTime.Now
                     };
 
-                    await _cacheStorage.SetAsync(hierarchicalKey, finalCacheEntry);
+                    await _cacheStorage.SetAsync(id, finalCacheEntry);
                     _logger.LogDebug("Updated final HLS cache after FFmpeg completion");
                 }
             }
@@ -185,8 +171,8 @@ public class HlsService
                 LastAccessed = DateTime.Now
             };
 
-            await _cacheStorage.SetAsync(hierarchicalKey, cacheEntry);
-            _logger.LogDebug("Stored HLS playlist in cache with key: {HierarchicalKey}", hierarchicalKey);
+            await _cacheStorage.SetAsync(id, cacheEntry);
+            _logger.LogDebug("Stored HLS playlist in cache with key: {Id}", id);
         }
 
         return playlistContent;
@@ -302,23 +288,14 @@ public class HlsService
             var host = request.Host.Value; // localhost:5095 or yourdomain.com
             var pathBase = request.PathBase.Value; // for apps deployed in subdirectories
 
-            var baseUrl = $"{scheme}://{host}{pathBase}/rest/hls/";
+            var baseUrl = $"{scheme}://{host}{pathBase}/hls?key=";
             _logger.LogDebug("Auto-detected base URL: {BaseUrl}", baseUrl);
             return baseUrl;
         }
-
-        // Fallback to configuration if HttpContext is not available
-        var configUrl = _configuration["Hls:BaseUrl"];
-        if (!string.IsNullOrEmpty(configUrl))
+        else
         {
-            _logger.LogDebug("Using configured base URL: {ConfigUrl}", configUrl);
-            return configUrl;
+            throw new Exception("Unable to determine base URL - HttpContext is null");
         }
-
-        // Final fallback
-        var fallbackUrl = "http://localhost:5095/rest/hls/";
-        _logger.LogDebug("Using fallback base URL: {FallbackUrl}", fallbackUrl);
-        return fallbackUrl;
     }
 
 

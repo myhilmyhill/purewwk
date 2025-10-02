@@ -147,75 +147,25 @@ public class MusicController : ControllerBase
         }
     }
 
-    [Obsolete("Use hierarchical path route /rest/hls/path/{*rel}")]
-    [HttpGet("hls/{cacheKey}/{*path}")]
-    public IActionResult GetHlsSegmentLegacy(string cacheKey, string path)
+    // New hierarchical path-based segment route: /hls?id=/path/to/segment
+    [HttpGet("~/hls")]
+    public IActionResult GetHlsSegmentHierarchical(string key)
     {
         try
         {
-            _logger.LogDebug("(LEGACY) Looking for HLS segment - CacheKey: {CacheKey}, Path: {Path}", cacheKey, path);
-
-            // Use the same directory structure as HlsService
-            var workingDir = _configuration["WorkingDirectory"];
-            var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
-
-            // The HlsService generates cache keys with bitrate info
-            // We need to find the correct cache directory by scanning for directories that start with the id
-            var hlsSegmentsDir = Path.Combine(baseDir, "hls_segments");
-
-            if (!Directory.Exists(hlsSegmentsDir))
-            {
-                _logger.LogWarning("HLS segments directory not found: {HlsSegmentsDir}", hlsSegmentsDir);
-                return NotFound($"HLS segments directory not found");
-            }
-
-            // Directly map cacheKey -> directory
-            var targetDir = Path.Combine(hlsSegmentsDir, cacheKey); // legacy layout
-            if (!Directory.Exists(targetDir))
-            {
-                _logger.LogWarning("Cache directory not found for cacheKey: {CacheKey}", cacheKey);
-                return NotFound($"Cache directory not found");
-            }
-
-            var fileName = Path.GetFileName(path);
-            var segmentPathFinal = Path.Combine(targetDir, fileName);
-            _logger.LogDebug("Checking segment path: {SegmentPathFinal}", segmentPathFinal);
-            if (System.IO.File.Exists(segmentPathFinal))
-            {
-                _logger.LogDebug("Found segment file: {SegmentPathFinal}", segmentPathFinal);
-                var contentType = fileName.EndsWith(".ts") ? "video/MP2T" : "application/vnd.apple.mpegurl";
-                return PhysicalFile(segmentPathFinal, contentType);
-            }
-
-            _logger.LogWarning("Segment not found: {FileName} in cacheKey: {CacheKey}", fileName, cacheKey);
-            return NotFound($"Segment not found: {fileName}");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error serving HLS segment: {Message}", ex.Message);
-            return StatusCode(500, $"Error serving segment: {ex.Message}");
-        }
-    }
-
-    // New hierarchical path-based segment route: /rest/hls/path/<relativeId>/<variantKey>/segment_xxx.ts
-    [HttpGet("hls/path/{*rel}")]
-    public IActionResult GetHlsSegmentHierarchical(string rel)
-    {
-        try
-        {
-            _logger.LogDebug("Looking for HLS segment (hierarchical) - Rel: {Rel}", rel);
+            _logger.LogDebug("Looking for HLS segment (hierarchical) - Key: {Key}", key);
             var workingDir = _configuration["WorkingDirectory"];
             var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
             var hlsSegmentsDir = Path.Combine(baseDir, "hls_segments");
 
-            if (string.IsNullOrWhiteSpace(rel)) return NotFound();
+            if (string.IsNullOrWhiteSpace(key)) return NotFound();
 
             // 正規化 & ディレクトリ逸脱防止
             var fullBase = Path.GetFullPath(hlsSegmentsDir);
-            var fullPath = Path.GetFullPath(Path.Combine(hlsSegmentsDir, rel.Replace('\\', '/')));
+            var fullPath = Path.GetFullPath($"{hlsSegmentsDir}{key}");
             if (!fullPath.StartsWith(fullBase, StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("Rejected path traversal attempt: {Rel}", rel);
+                _logger.LogWarning("Rejected path traversal attempt: {Key}", key);
                 return Forbid();
             }
 
