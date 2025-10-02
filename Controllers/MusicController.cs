@@ -57,6 +57,84 @@ public class MusicController : ControllerBase
         return Ok("Test endpoint is working");
     }
 
+    [HttpGet("getRandomSongs.view")]
+    public IActionResult GetRandomSongs(int size = 10, string? genre = null, int? fromYear = null, int? toYear = null, string? musicFolderId = null)
+    {
+        try
+        {
+            // Limit size to max 500
+            var limitedSize = Math.Min(size, 500);
+            
+            var randomSongs = _luceneService.GetRandomSongs(limitedSize, genre, fromYear, toYear, musicFolderId);
+            
+            var songList = randomSongs.Select(s =>
+            {
+                var fullPath = s.ContainsKey("path") ? s["path"] : "";
+                var fileName = Path.GetFileName(fullPath);
+                var extension = Path.GetExtension(fullPath).ToLowerInvariant().TrimStart('.');
+                
+                // Map file extension to content type
+                var contentType = extension switch
+                {
+                    "mp3" => "audio/mpeg",
+                    "flac" => "audio/flac",
+                    "wav" => "audio/wav",
+                    "ogg" => "audio/ogg",
+                    "m4a" => "audio/mp4",
+                    "aac" => "audio/aac",
+                    "wma" => "audio/x-ms-wma",
+                    _ => "application/octet-stream"
+                };
+                
+                // Get file size if file exists
+                long? fileSize = null;
+                if (System.IO.File.Exists(fullPath))
+                {
+                    fileSize = new FileInfo(fullPath).Length;
+                }
+                
+                return new SongResponse
+                {
+                    Id = s.ContainsKey("id") ? s["id"] : "",
+                    Parent = s.ContainsKey("parent") ? s["parent"] : null,
+                    Title = s.ContainsKey("title") ? s["title"] : fileName,
+                    IsDir = false,
+                    IsVideo = false,
+                    Type = "music",
+                    Artist = s.ContainsKey("artist") ? s["artist"] : null,
+                    CoverArt = s.ContainsKey("coverArt") ? s["coverArt"] : null,
+                    Suffix = extension,
+                    ContentType = contentType,
+                    Path = s.ContainsKey("id") ? s["id"] : "",
+                    Size = fileSize
+                };
+            }).ToList();
+            
+            var randomSongsResp = new RandomSongsResponse
+            {
+                Song = songList
+            };
+            
+            var resp = new SubsonicResponse
+            {
+                RandomSongs = randomSongsResp
+            };
+            
+            return Ok(new Dictionary<string, object> { ["subsonic-response"] = resp });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error getting random songs: {ex.Message}");
+            return StatusCode(500, new Dictionary<string, object>
+            {
+                ["subsonic-response"] = new SubsonicResponse
+                {
+                    Status = "failed"
+                }
+            });
+        }
+    }
+
     [HttpGet("hls.m3u8")]
     public async Task<IActionResult> GetHlsPlaylist(string id, int bitRate = 128, string? audioTrack = null)
     {
