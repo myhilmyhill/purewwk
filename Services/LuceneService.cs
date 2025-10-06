@@ -344,6 +344,50 @@ public class LuceneService : IDisposable
         }
     }
 
+    public List<Dictionary<string, string>> GetRandomSongs(int size, string? genre = null, int? fromYear = null, int? toYear = null, string? musicFolderId = null)
+    {
+        try
+        {
+            using var reader = DirectoryReader.Open(_directory);
+            var searcher = new IndexSearcher(reader);
+            
+            // Build query to get only files (not directories)
+            var boolQuery = new BooleanQuery
+            {
+                { new TermQuery(new Term("isDir", "false")), Occur.MUST }
+            };
+            
+            // Note: genre, year, and musicFolderId filtering would require these fields to be indexed
+            // For now, we'll get all songs and return random ones
+            // In a production system, we'd index metadata from audio files (using TagLib# or similar)
+            
+            var hits = searcher.Search(boolQuery, reader.NumDocs).ScoreDocs;
+            var allSongs = new List<Dictionary<string, string>>();
+            
+            foreach (var hit in hits)
+            {
+                var doc = searcher.Doc(hit.Doc);
+                var dict = new Dictionary<string, string>();
+                foreach (var field in doc.Fields)
+                {
+                    dict[field.Name] = field.GetStringValue();
+                }
+                allSongs.Add(dict);
+            }
+            
+            // Randomize and limit to requested size
+            var random = new Random();
+            var randomSongs = allSongs.OrderBy(_ => random.Next()).Take(Math.Min(size, 500)).ToList();
+            
+            return randomSongs;
+        }
+        catch (IndexNotFoundException)
+        {
+            Console.WriteLine("Index not found, returning empty result");
+            return new List<Dictionary<string, string>>();
+        }
+    }
+
     public void Dispose()
     {
         _writer?.Dispose();
