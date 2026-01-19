@@ -50,7 +50,11 @@ public class HlsService
         _logger.LogDebug("Looking for file with id: {Id}", id);
 
         // Fix directory path handling - use Unix-style paths for consistency with Lucene index
-        var directoryName = id.Contains('/') ? string.Join('/', id.Split('/').SkipLast(1)) : "/";
+        var directoryName = "/";
+        if (id.Contains('/') && id.LastIndexOf('/') > 0)
+        {
+            directoryName = id.Substring(0, id.LastIndexOf('/'));
+        }
         _logger.LogDebug("Directory name: {DirectoryName}", directoryName);
 
         var children = _luceneService.GetChildren(directoryName);

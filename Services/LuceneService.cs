@@ -229,77 +229,108 @@ public class LuceneService : IDisposable
         }
     }
 
+    private volatile bool _isScanning = false;
+    private readonly object _scanLock = new object();
+
     public void IndexDirectory(string dirPath, string? parentId = null)
     {
-        _logger.LogInformation("Indexing directory: {Path} with parentId: {ParentId}", dirPath, parentId);
-        var currentId = parentId ?? "/";
-        if (parentId == null)
+        lock (_scanLock)
         {
-            // root directory - 完全再インデックスの場合のみクリア
-            ClearIndex();
-            var doc = new Document
+            // Only allow one root-level scan at a time
+            if (parentId == null)
             {
-                new StringField("id", "/", Field.Store.YES),
-                new StringField("parent", "", Field.Store.YES),
-                new StringField("isDir", "true", Field.Store.YES),
-                new StringField("title", Path.GetFileName(dirPath), Field.Store.YES),
-                new StringField("name", Path.GetFileName(dirPath), Field.Store.YES),
-                new StringField("path", "/", Field.Store.YES)
-            };
-            _writer.AddDocument(doc);
-        }
-        var dirInfo = new DirectoryInfo(dirPath);
-        foreach (var subDir in dirInfo.GetDirectories())
-        {
-            // Only index directories that contain music files
-            if (DirectoryContainsMusicFiles(subDir.FullName))
-            {
-                var subDirId = $"{currentId.TrimEnd('/')}/{subDir.Name}";
-                _logger.LogDebug("Indexing subdir: {SubDirName} id: {SubDirId}", subDir.Name, subDirId);
-                var doc = new Document
+                if (_isScanning)
                 {
-                    new StringField("id", subDirId, Field.Store.YES),
-                    new StringField("parent", currentId, Field.Store.YES),
-                    new StringField("isDir", "true", Field.Store.YES),
-                    new StringField("title", subDir.Name, Field.Store.YES),
-                    new StringField("name", subDir.Name, Field.Store.YES),
-                    new StringField("path", subDirId, Field.Store.YES)
-                };
-                _writer.AddDocument(doc);
-                // 再帰的にサブディレクトリをインデックス
-                IndexDirectory(subDir.FullName, subDirId);
+                    _logger.LogWarning("Scan already in progress, skipping request");
+                    return;
+                }
+                _isScanning = true;
             }
-            else
+
+            try
             {
-                _logger.LogDebug("Skipping directory (no music files): {SubDirName}", subDir.Name);
-            }
-        }
-        foreach (var file in dirInfo.GetFiles())
-        {
-            // Only index music files
-            if (IsMusicFile(file.FullName))
-            {
-                var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
-                _logger.LogDebug("Indexing music file: {FileName} id: {FileId}", file.Name, fileId);
-                var doc = new Document
+                _logger.LogInformation("Indexing directory: {Path} with parentId: {ParentId}", dirPath, parentId);
+                var currentId = parentId ?? "/";
+                if (parentId == null)
                 {
-                    new StringField("id", fileId, Field.Store.YES),
-                    new StringField("parent", currentId, Field.Store.YES),
-                    new StringField("isDir", "false", Field.Store.YES),
-                    new StringField("title", file.Name, Field.Store.YES),
-                    new StringField("artist", "", Field.Store.YES),
-                    new StringField("coverArt", "", Field.Store.YES),
-                    new StringField("name", file.Name, Field.Store.YES),
-                    new StringField("path", file.FullName, Field.Store.YES)
-                };
-                _writer.AddDocument(doc);
+                    // root directory - 完全再インデックスの場合のみクリア
+                    ClearIndex();
+                    var doc = new Document
+                    {
+                        new StringField("id", "/", Field.Store.YES),
+                        new StringField("parent", "", Field.Store.YES),
+                        new StringField("isDir", "true", Field.Store.YES),
+                        new StringField("title", Path.GetFileName(dirPath), Field.Store.YES),
+                        new StringField("name", Path.GetFileName(dirPath), Field.Store.YES),
+                        new StringField("path", "/", Field.Store.YES)
+                    };
+                    _writer.AddDocument(doc);
+                }
+                var dirInfo = new DirectoryInfo(dirPath);
+                foreach (var subDir in dirInfo.GetDirectories())
+                {
+                    // Only index directories that contain music files
+                    if (DirectoryContainsMusicFiles(subDir.FullName))
+                    {
+                        var subDirId = $"{currentId.TrimEnd('/')}/{subDir.Name}";
+                        _logger.LogDebug("Indexing subdir: {SubDirName} id: {SubDirId}", subDir.Name, subDirId);
+                        var doc = new Document
+                        {
+                            new StringField("id", subDirId, Field.Store.YES),
+                            new StringField("parent", currentId, Field.Store.YES),
+                            new StringField("isDir", "true", Field.Store.YES),
+                            new StringField("title", subDir.Name, Field.Store.YES),
+                            new StringField("name", subDir.Name, Field.Store.YES),
+                            new StringField("path", subDirId, Field.Store.YES)
+                        };
+                        _writer.AddDocument(doc);
+                        // 再帰的にサブディレクトリをインデックス
+                        IndexDirectory(subDir.FullName, subDirId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Skipping directory (no music files): {SubDirName}", subDir.Name);
+                    }
+                }
+                foreach (var file in dirInfo.GetFiles())
+                {
+                    // Only index music files
+                    if (IsMusicFile(file.FullName))
+                    {
+                        var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
+                        _logger.LogDebug("Indexing music file: {FileName} id: {FileId}", file.Name, fileId);
+                        var doc = new Document
+                        {
+                            new StringField("id", fileId, Field.Store.YES),
+                            new StringField("parent", currentId, Field.Store.YES),
+                            new StringField("isDir", "false", Field.Store.YES),
+                            new StringField("title", file.Name, Field.Store.YES),
+                            new StringField("artist", "", Field.Store.YES),
+                            new StringField("coverArt", "", Field.Store.YES),
+                            new StringField("name", file.Name, Field.Store.YES),
+                            new StringField("path", file.FullName, Field.Store.YES)
+                        };
+                        _writer.AddDocument(doc);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Skipping non-music file: {FileName}", file.Name);
+                    }
+                }
+                
+                if (parentId == null)
+                {
+                    _writer.Commit();
+                }
             }
-            else
+            finally
             {
-                _logger.LogDebug("Skipping non-music file: {FileName}", file.Name);
+                if (parentId == null)
+                {
+                    _isScanning = false;
+                }
             }
         }
-        _writer.Commit();
     }
 
     public List<Dictionary<string, string>> GetChildren(string parentId)

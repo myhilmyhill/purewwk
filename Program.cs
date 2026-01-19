@@ -39,20 +39,31 @@ _ = Task.Run(() =>
 {
     if (Directory.Exists(musicDir))
     {
-        if (!luceneService.IsIndexValid())
-        {
-            logger.LogInformation("Index not found or invalid. Creating new index...");
-            luceneService.IndexDirectory(musicDir);
-        }
-        else
-        {
-            logger.LogInformation("Valid index found. Skipping indexing.");
-        }
+        logger.LogInformation("Starting library scan...");
+        luceneService.IndexDirectory(musicDir);
+        logger.LogInformation("Library scan completed.");
     }
 });
 
 // Ensure FileWatcherService is initialized (it starts automatically in constructor)
 _ = fileWatcherService;
+
+
+if (app.Environment.IsDevelopment())
+{
+    app.Use(async (context, next) =>
+    {
+        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Incoming Request: {Method} {Path}{QueryString}", 
+            context.Request.Method, 
+            context.Request.Path, 
+            context.Request.QueryString);
+            
+        await next();
+        
+        logger.LogInformation("Response: {StatusCode}", context.Response.StatusCode);
+    });
+}
 
 app.MapControllers();
 
