@@ -49,30 +49,25 @@ public class HlsService
         // Get file path from Lucene index
         _logger.LogDebug("Looking for file with id: {Id}", id);
 
-        // Fix directory path handling - use Unix-style paths for consistency with Lucene index
-        var directoryName = "/";
-        if (id.Contains('/') && id.LastIndexOf('/') > 0)
+        var fileDoc = _luceneService.GetDocumentById(id);
+        if (fileDoc == null || fileDoc["isDir"] == "true")
         {
-            directoryName = id.Substring(0, id.LastIndexOf('/'));
-        }
-        _logger.LogDebug("Directory name: {DirectoryName}", directoryName);
-
-        var children = _luceneService.GetChildren(directoryName);
-        _logger.LogDebug("Found {Count} children in directory", children.Count());
-
-        var fileDoc = children.FirstOrDefault(c => c["id"] == id && c["isDir"] == "false");
-        _logger.LogDebug("Found file doc: {FileDocFound}", fileDoc != null);
-
-        if (fileDoc == null)
-        {
-            // デバッグ: 利用可能なファイルをすべて表示
-            foreach (var child in children.Where(c => c["isDir"] == "false"))
-            {
-                _logger.LogDebug("Available file: id='{Id}', title='{Title}'", child["id"], child["title"]);
-            }
             throw new FileNotFoundException("Media file not found: " + id);
         }
+
         var fullPath = fileDoc["path"];
+
+        // Check for CUE track metadata
+        bool isCueTrack = fileDoc.ContainsKey("isCueTrack") && fileDoc["isCueTrack"] == "true";
+        double cueStart = 0;
+        double cueDuration = 0;
+
+        if (isCueTrack)
+        {
+            if (fileDoc.ContainsKey("cueStart")) double.TryParse(fileDoc["cueStart"], out cueStart);
+            if (fileDoc.ContainsKey("cueDuration")) double.TryParse(fileDoc["cueDuration"], out cueDuration);
+            _logger.LogDebug("Detected CUE track. Source: {Source}, Start: {Start}, Duration: {Duration}", fullPath, cueStart, cueDuration);
+        }
 
         if (!File.Exists(fullPath))
         {
@@ -92,17 +87,33 @@ public class HlsService
         var baseUrl = GetBaseUrl();
         var segmentBaseUrl = $"{baseUrl}{key}/";
         
-        // FFmpeg command for HLS - use first bitrate if provided, otherwise use default
+        // FFmpeg command for HLS
         string ffmpegArgs;
+        var seekArgs = "";
+        
+        if (isCueTrack)
+        {
+             // Use -ss before input for fast seek
+             seekArgs = $"-ss {cueStart}";
+             if (cueDuration > 0)
+             {
+                 seekArgs += $" -t {cueDuration}";
+             }
+        }
+
+        // Construct command - Optimized for audio-only HLS
+        var inputArgs = isCueTrack ? $"{seekArgs} -i \"{fullPath}\"" : $"-i \"{fullPath}\"";
+        var commonHlsArgs = $"-f hls -hls_time 10 -hls_list_size 0 -hls_base_url \"{segmentBaseUrl}\" -hls_segment_filename \"{cacheDir}/segment_%03d.ts\"";
+
         if (bitRates.Length > 0)
         {
-            var bitRate = bitRates[0]; // Use only the first bitrate
-            ffmpegArgs = $"-y -v error -i \"{fullPath}\" -c:v libx264 -b:v {bitRate}k -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_base_url \"{segmentBaseUrl}\" -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            var bitRate = bitRates[0];
+            ffmpegArgs = $"-y -v error {inputArgs} -vn -c:a aac -b:a {bitRate}k {commonHlsArgs} \"{playlistPath}\"";
             _logger.LogDebug("Using single bitrate: {BitRate}k", bitRate);
         }
         else
         {
-            ffmpegArgs = $"-y -v error -i \"{fullPath}\" -c:v libx264 -c:a aac -f hls -hls_time 10 -hls_list_size 0 -hls_base_url \"{segmentBaseUrl}\" -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+            ffmpegArgs = $"-y -v error {inputArgs} -vn -c:a aac {commonHlsArgs} \"{playlistPath}\"";
             _logger.LogDebug("Using default bitrate");
         }
 

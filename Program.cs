@@ -20,6 +20,12 @@ builder.Services.AddSingleton<IHlsCacheStorage>(provider =>
     return new HlsCacheStorage(logger, maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
 });
 builder.Services.AddSingleton<HlsService>();
+builder.Services.AddSingleton<CueService>();
+builder.Services.AddSingleton<CueFolderService>();
+
+
+// Support Shift_JIS and other encodings
+System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
 var musicDir = builder.Configuration["MusicDirectory"];
 if (string.IsNullOrEmpty(musicDir))
@@ -37,7 +43,7 @@ var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
 _ = Task.Run(() =>
 {
-    if (Directory.Exists(musicDir))
+        if (Directory.Exists(musicDir))
     {
         logger.LogInformation("Starting library scan...");
         luceneService.IndexDirectory(musicDir);

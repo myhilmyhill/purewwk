@@ -57,6 +57,25 @@ public class MusicController : ControllerBase
         return Ok("Test endpoint is working");
     }
 
+    [HttpGet("debug.view")]
+    public IActionResult DebugIndex()
+    {
+        var docs = new List<Dictionary<string, string>>();
+        using var reader = Lucene.Net.Index.DirectoryReader.Open(Lucene.Net.Store.FSDirectory.Open(Path.Combine(_configuration["WorkingDirectory"] ?? AppContext.BaseDirectory, "music_index")));
+        var searcher = new Lucene.Net.Search.IndexSearcher(reader);
+        var query = new Lucene.Net.Search.MatchAllDocsQuery();
+        var hits = searcher.Search(query, 1000).ScoreDocs;
+        
+        foreach(var hit in hits)
+        {
+            var doc = searcher.Doc(hit.Doc);
+            var d = new Dictionary<string, string>();
+            foreach(var field in doc.Fields) d[field.Name] = field.GetStringValue();
+            docs.Add(d);
+        }
+        return Ok(docs);
+    }
+
     [HttpGet("hls.m3u8")]
     public async Task<IActionResult> GetHlsPlaylist(string id, int bitRate = 128, string? audioTrack = null)
     {
@@ -90,17 +109,9 @@ public class MusicController : ControllerBase
         {
             _logger.LogDebug("Download request received - ID: {Id}", id);
 
-            // Get file path from Lucene index (similar to HlsService logic)
-            var directoryName = "/";
-            if (id.Contains("/") && id.LastIndexOf("/") > 0)
-            {
-                directoryName = id.Substring(0, id.LastIndexOf("/"));
-            }
+            var fileDoc = _luceneService.GetDocumentById(id);
 
-            var children = _luceneService.GetChildren(directoryName);
-            var fileDoc = children.FirstOrDefault(c => c["id"] == id && c["isDir"] == "false");
-
-            if (fileDoc == null)
+            if (fileDoc == null || fileDoc["isDir"] == "true")
             {
                 _logger.LogWarning("File not found with id: {Id}", id);
                 return NotFound($"Media file not found for id: {id}");

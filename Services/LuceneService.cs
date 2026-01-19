@@ -8,22 +8,30 @@ using System.IO;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using System.Text;
 
 namespace repos.Services;
 
 public class LuceneService : IDisposable
 {
     private readonly ILogger<LuceneService> _logger;
+    private readonly CueService _cueService;
+    private readonly CueFolderService _cueFolderService;
     private readonly string _indexPath;
     private readonly Lucene.Net.Store.Directory _directory;
     private readonly Lucene.Net.Analysis.Analyzer _analyzer;
     private readonly IndexWriter _writer;
     private readonly LuceneVersion _version = LuceneVersion.LUCENE_48;
-    private readonly string[] _musicExtensions = [".mp3", ".flac", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".wma"];
+    private readonly string[] _musicExtensions = [".mp3", ".flac", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".wma", ".cue"];
+    // Supported audio extensions for CUE source file detection
+    private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
 
-    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration)
+    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, CueService cueService, CueFolderService cueFolderService)
     {
         _logger = logger;
+        _cueService = cueService;
+        _cueFolderService = cueFolderService;
         var workingDir = configuration["WorkingDirectory"];
         var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
         var indexPath = Path.Combine(baseDir, "music_index");
@@ -86,15 +94,28 @@ public class LuceneService : IDisposable
     private bool IsMusicFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return _musicExtensions.Contains(extension);
+        var isMusic = _musicExtensions.Contains(extension);
+        if (!isMusic) {
+             _logger.LogInformation("File rejected by IsMusicFile: {Path}, Ext: {Ext}", filePath, extension);
+        }
+        return isMusic;
     }
 
     private bool DirectoryContainsMusicFiles(string dirPath)
     {
         try
         {
+            _logger.LogInformation("Checking directory for music: {DirPath}", dirPath);
+            var files = Directory.GetFiles(dirPath);
+            _logger.LogInformation("Found {Count} files in {DirPath}", files.Length, dirPath);
+            foreach (var f in files)
+            {
+                var ext = Path.GetExtension(f);
+                _logger.LogInformation("File in check: {Name}, Ext: {Ext}, IsMusic: {IsMusic}", Path.GetFileName(f), ext, IsMusicFile(f));
+            }
+
             // Check if directory has any music files directly
-            if (Directory.GetFiles(dirPath).Any(file => IsMusicFile(file)))
+            if (files.Any(file => IsMusicFile(file)))
             {
                 return true;
             }
@@ -102,8 +123,9 @@ public class LuceneService : IDisposable
             // Recursively check subdirectories
             return Directory.GetDirectories(dirPath).Any(subDir => DirectoryContainsMusicFiles(subDir));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Error checking directory: {DirPath}", dirPath);
             return false;
         }
     }
@@ -149,22 +171,42 @@ public class LuceneService : IDisposable
             }
             else if (File.Exists(fullPath) && IsMusicFile(fullPath))
             {
-                // Only index music files
                 var parentPath = Path.GetDirectoryName(relativePath);
                 var parentId = string.IsNullOrEmpty(parentPath) ? "/" : "/" + parentPath.Replace('\\', '/');
-                
-                var doc = new Document
+
+                if (fullPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
                 {
-                    new StringField("id", id, Field.Store.YES),
-                    new StringField("parent", parentId, Field.Store.YES),
-                    new StringField("isDir", "false", Field.Store.YES),
-                    new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
-                    new StringField("artist", "", Field.Store.YES),
-                    new StringField("coverArt", "", Field.Store.YES),
-                    new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
-                    new StringField("path", fullPath, Field.Store.YES)
-                };
-                _writer.AddDocument(doc);
+                    // CUE file: Index as directory and add tracks
+                    var doc = new Document
+                    {
+                        new StringField("id", id, Field.Store.YES),
+                        new StringField("parent", parentId, Field.Store.YES),
+                        new StringField("isDir", "true", Field.Store.YES),
+                        new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
+                        new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
+                        new StringField("path", fullPath, Field.Store.YES)
+                    };
+                    _writer.AddDocument(doc);
+                    
+                    // Re-index tracks
+                    IndexCueTracks(fullPath, id);
+                }
+                else
+                {
+                    // Normal music file
+                    var doc = new Document
+                    {
+                        new StringField("id", id, Field.Store.YES),
+                        new StringField("parent", parentId, Field.Store.YES),
+                        new StringField("isDir", "false", Field.Store.YES),
+                        new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
+                        new StringField("artist", "", Field.Store.YES),
+                        new StringField("coverArt", "", Field.Store.YES),
+                        new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
+                        new StringField("path", fullPath, Field.Store.YES)
+                    };
+                    _writer.AddDocument(doc);
+                }
             }
             else if (File.Exists(fullPath))
             {
@@ -213,18 +255,36 @@ public class LuceneService : IDisposable
                 var relativePath = Path.GetRelativePath(musicRootPath, file.FullName).Replace('\\', '/');
                 var fileId = "/" + relativePath;
                 
-                var doc = new Document
+                if (file.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase))
                 {
-                    new StringField("id", fileId, Field.Store.YES),
-                    new StringField("parent", currentId, Field.Store.YES),
-                    new StringField("isDir", "false", Field.Store.YES),
-                    new StringField("title", file.Name, Field.Store.YES),
-                    new StringField("artist", "", Field.Store.YES),
-                    new StringField("coverArt", "", Field.Store.YES),
-                    new StringField("name", file.Name, Field.Store.YES),
-                    new StringField("path", file.FullName, Field.Store.YES)
-                };
-                _writer.AddDocument(doc);
+                    _logger.LogInformation("Found CUE file, indexing as directory: {FileName}", file.Name);
+                    var doc = new Document
+                    {
+                        new StringField("id", fileId, Field.Store.YES),
+                        new StringField("parent", currentId, Field.Store.YES),
+                        new StringField("isDir", "true", Field.Store.YES),
+                        new StringField("title", file.Name, Field.Store.YES),
+                        new StringField("name", file.Name, Field.Store.YES),
+                        new StringField("path", file.FullName, Field.Store.YES)
+                    };
+                    _writer.AddDocument(doc);
+                    IndexCueTracks(file.FullName, fileId);
+                }
+                else
+                {
+                    var doc = new Document
+                    {
+                        new StringField("id", fileId, Field.Store.YES),
+                        new StringField("parent", currentId, Field.Store.YES),
+                        new StringField("isDir", "false", Field.Store.YES),
+                        new StringField("title", file.Name, Field.Store.YES),
+                        new StringField("artist", "", Field.Store.YES),
+                        new StringField("coverArt", "", Field.Store.YES),
+                        new StringField("name", file.Name, Field.Store.YES),
+                        new StringField("path", file.FullName, Field.Store.YES)
+                    };
+                    _writer.AddDocument(doc);
+                }
             }
         }
     }
@@ -294,27 +354,50 @@ public class LuceneService : IDisposable
                 }
                 foreach (var file in dirInfo.GetFiles())
                 {
-                    // Only index music files
-                    if (IsMusicFile(file.FullName))
+                    try
                     {
-                        var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
-                        _logger.LogDebug("Indexing music file: {FileName} id: {FileId}", file.Name, fileId);
-                        var doc = new Document
+                        var isCue = file.Name.EndsWith(".cue", StringComparison.OrdinalIgnoreCase);
+                        // Check IsMusicFile OR isCue fallback
+                        if (IsMusicFile(file.FullName) || isCue)
                         {
-                            new StringField("id", fileId, Field.Store.YES),
-                            new StringField("parent", currentId, Field.Store.YES),
-                            new StringField("isDir", "false", Field.Store.YES),
-                            new StringField("title", file.Name, Field.Store.YES),
-                            new StringField("artist", "", Field.Store.YES),
-                            new StringField("coverArt", "", Field.Store.YES),
-                            new StringField("name", file.Name, Field.Store.YES),
-                            new StringField("path", file.FullName, Field.Store.YES)
-                        };
-                        _writer.AddDocument(doc);
+                            var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
+
+                            if (isCue)
+                            {
+                                _logger.LogInformation("Indexing CUE file as directory: {FileName}", file.Name);
+                                var doc = new Document
+                                {
+                                    new StringField("id", fileId, Field.Store.YES),
+                                    new StringField("parent", currentId, Field.Store.YES),
+                                    new StringField("isDir", "true", Field.Store.YES), // CUE file acts as directory
+                                    new StringField("title", file.Name, Field.Store.YES),
+                                    new StringField("name", file.Name, Field.Store.YES),
+                                    new StringField("path", file.FullName, Field.Store.YES)
+                                };
+                                _writer.AddDocument(doc);
+                                IndexCueTracks(file.FullName, fileId);
+                            }
+                            else
+                            {
+                                // Normal music file
+                                var doc = new Document
+                                {
+                                    new StringField("id", fileId, Field.Store.YES),
+                                    new StringField("parent", currentId, Field.Store.YES),
+                                    new StringField("isDir", "false", Field.Store.YES),
+                                    new StringField("title", file.Name, Field.Store.YES),
+                                    new StringField("artist", "", Field.Store.YES),
+                                    new StringField("coverArt", "", Field.Store.YES),
+                                    new StringField("name", file.Name, Field.Store.YES),
+                                    new StringField("path", file.FullName, Field.Store.YES)
+                                };
+                                _writer.AddDocument(doc);
+                            }
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        _logger.LogDebug("Skipping non-music file: {FileName}", file.Name);
+                        _logger.LogError(ex, "Error processing file: {FileName}", file.Name);
                     }
                 }
                 
@@ -330,6 +413,64 @@ public class LuceneService : IDisposable
                     _isScanning = false;
                 }
             }
+        }
+    }
+
+    private void IndexCueTracks(string cueFilePath, string parentId)
+    {
+        try
+        {
+            var tracks = _cueFolderService.GetVirtualTracks(cueFilePath);
+            foreach (var track in tracks)
+            {
+                var virtualId = $"{parentId}/{track.TrackNumber:00}";
+                var doc = new Document
+                {
+                    new StringField("id", virtualId, Field.Store.YES),
+                    new StringField("parent", parentId, Field.Store.YES),
+                    new StringField("isDir", "false", Field.Store.YES),
+                    new StringField("title", track.Title, Field.Store.YES),
+                    new StringField("artist", track.Artist, Field.Store.YES),
+                    new StringField("coverArt", "", Field.Store.YES),
+                    new StringField("name", track.VirtualFileName, Field.Store.YES),
+                    new StringField("path", track.SourceAudioPath, Field.Store.YES),
+                    new StringField("isCueTrack", "true", Field.Store.YES),
+                    new DoubleField("cueStart", track.StartTime.TotalSeconds, Field.Store.YES),
+                    new DoubleField("cueDuration", track.Duration?.TotalSeconds ?? 0, Field.Store.YES)
+                };
+                _writer.AddDocument(doc);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to index CUE tracks: {Path}", cueFilePath);
+        }
+    }
+
+    // ParseCue method removed (moved to CueService)
+
+    public Dictionary<string, string>? GetDocumentById(string id)
+    {
+        try
+        {
+            using var reader = DirectoryReader.Open(_directory);
+            var searcher = new IndexSearcher(reader);
+            var query = new TermQuery(new Term("id", id));
+            var hits = searcher.Search(query, 1).ScoreDocs;
+            if (hits.Length == 0) return null;
+
+            var doc = searcher.Doc(hits[0].Doc);
+            var dict = new Dictionary<string, string>();
+            foreach (var field in doc.Fields)
+            {
+                dict[field.Name] = field.GetStringValue();
+            }
+            return dict;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting document by id: {Id}", id);
+            return null;
         }
     }
 
