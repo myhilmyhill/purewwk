@@ -19,6 +19,7 @@ public class LuceneService : IDisposable
     private readonly CueService _cueService;
     private readonly CueFolderService _cueFolderService;
     private readonly string _indexPath;
+    private readonly IFileSystem _fileSystem;
     private readonly Lucene.Net.Store.Directory _directory;
     private readonly Lucene.Net.Analysis.Analyzer _analyzer;
     private readonly IndexWriter _writer;
@@ -27,17 +28,33 @@ public class LuceneService : IDisposable
     // Supported audio extensions for CUE source file detection
     private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
 
-    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, CueService cueService, CueFolderService cueFolderService)
+    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, CueService cueService, CueFolderService cueFolderService, IFileSystem fileSystem)
+        : this(logger, configuration, cueService, cueFolderService, fileSystem, null)
+    {
+    }
+
+    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, CueService cueService, CueFolderService cueFolderService, IFileSystem fileSystem, Lucene.Net.Store.Directory? luceneDirectory = null)
     {
         _logger = logger;
         _cueService = cueService;
         _cueFolderService = cueFolderService;
+        _fileSystem = fileSystem;
+        
         var workingDir = configuration["WorkingDirectory"];
         var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
         var indexPath = Path.Combine(baseDir, "music_index");
         
         _indexPath = indexPath;
-        _directory = Lucene.Net.Store.FSDirectory.Open(indexPath);
+        
+        if (luceneDirectory != null)
+        {
+            _directory = luceneDirectory;
+        }
+        else
+        {
+            _directory = Lucene.Net.Store.FSDirectory.Open(indexPath);
+        }
+
         _analyzer = new StandardAnalyzer(_version);
         var config = new IndexWriterConfig(_version, _analyzer);
         _writer = new IndexWriter(_directory, config);
@@ -45,15 +62,18 @@ public class LuceneService : IDisposable
     {
         try
         {
-            if (!Directory.Exists(_indexPath))
+            // If we are using a RAMDirectory or mocked directory, we assume it's valid if injected.
+            // But if it's FSDirectory check the path.
+            if (_directory is Lucene.Net.Store.FSDirectory fsDir)
             {
-                return false;
-            }
-
-            // Check if index directory has any files
-            if (!Directory.GetFiles(_indexPath, "*", SearchOption.AllDirectories).Any())
-            {
-                return false;
+                 if (!_fileSystem.DirectoryExists(fsDir.Directory.FullName))
+                 {
+                     return false;
+                 }
+                 if (!_fileSystem.GetFiles(fsDir.Directory.FullName, "*", SearchOption.AllDirectories).Any())
+                 {
+                     return false;
+                 }
             }
 
             // Try to open and read the index
@@ -81,7 +101,7 @@ public class LuceneService : IDisposable
         _writer.DeleteDocuments(query);
         
         // 該当パスで始まる子要素も削除（ディレクトリの場合）
-        if (Directory.Exists(path))
+        if (_fileSystem.DirectoryExists(path))
         {
             var prefixQuery = new PrefixQuery(new Term("path", path + Path.DirectorySeparatorChar));
             _writer.DeleteDocuments(prefixQuery);
@@ -106,7 +126,7 @@ public class LuceneService : IDisposable
         try
         {
             _logger.LogInformation("Checking directory for music: {DirPath}", dirPath);
-            var files = Directory.GetFiles(dirPath);
+            var files = _fileSystem.GetFiles(dirPath).ToArray();
             _logger.LogInformation("Found {Count} files in {DirPath}", files.Length, dirPath);
             foreach (var f in files)
             {
@@ -121,7 +141,7 @@ public class LuceneService : IDisposable
             }
 
             // Recursively check subdirectories
-            return Directory.GetDirectories(dirPath).Any(subDir => DirectoryContainsMusicFiles(subDir));
+            return _fileSystem.GetDirectories(dirPath).Any(subDir => DirectoryContainsMusicFiles(subDir));
         }
         catch (Exception ex)
         {
@@ -142,7 +162,7 @@ public class LuceneService : IDisposable
             var query = new TermQuery(new Term("path", fullPath));
             _writer.DeleteDocuments(query);
             
-            if (Directory.Exists(fullPath))
+            if (_fileSystem.DirectoryExists(fullPath))
             {
                 // Only index directory if it contains music files
                 if (DirectoryContainsMusicFiles(fullPath))
@@ -169,46 +189,68 @@ public class LuceneService : IDisposable
                     _logger.LogDebug("Skipping directory (no music files): {Path}", fullPath);
                 }
             }
-            else if (File.Exists(fullPath) && IsMusicFile(fullPath))
+            else if (_fileSystem.FileExists(fullPath) && IsMusicFile(fullPath))
             {
-                var parentPath = Path.GetDirectoryName(relativePath);
-                var parentId = string.IsNullOrEmpty(parentPath) ? "/" : "/" + parentPath.Replace('\\', '/');
-
-                if (fullPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
+                var dirPath = Path.GetDirectoryName(fullPath);
+                var shouldIndex = true;
+                if (dirPath != null)
                 {
-                    // CUE file: Index as directory and add tracks
-                    var doc = new Document
+                    GetCueSuppressionInfo(dirPath, out var validCues, out var suppressedFiles);
+                    if (fullPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
                     {
-                        new StringField("id", id, Field.Store.YES),
-                        new StringField("parent", parentId, Field.Store.YES),
-                        new StringField("isDir", "true", Field.Store.YES),
-                        new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
-                        new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
-                        new StringField("path", fullPath, Field.Store.YES)
-                    };
-                    _writer.AddDocument(doc);
-                    
-                    // Re-index tracks
-                    IndexCueTracks(fullPath, id);
+                        if (!validCues.Contains(fullPath)) shouldIndex = false;
+                    }
+                    else
+                    {
+                        if (suppressedFiles.Contains(fullPath)) shouldIndex = false;
+                    }
+                }
+
+                if (shouldIndex)
+                {
+                    var parentPath = Path.GetDirectoryName(relativePath);
+                    var parentId = string.IsNullOrEmpty(parentPath) ? "/" : "/" + parentPath.Replace('\\', '/');
+
+                    if (fullPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // CUE file: Index as directory and add tracks
+                        var doc = new Document
+                        {
+                            new StringField("id", id, Field.Store.YES),
+                            new StringField("parent", parentId, Field.Store.YES),
+                            new StringField("isDir", "true", Field.Store.YES),
+                            new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
+                            new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
+                            new StringField("path", fullPath, Field.Store.YES)
+                        };
+                        _writer.AddDocument(doc);
+                        
+                        // Re-index tracks
+                        IndexCueTracks(fullPath, id);
+                    }
+                    else
+                    {
+                        // Normal music file
+                        var doc = new Document
+                        {
+                            new StringField("id", id, Field.Store.YES),
+                            new StringField("parent", parentId, Field.Store.YES),
+                            new StringField("isDir", "false", Field.Store.YES),
+                            new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
+                            new StringField("artist", "", Field.Store.YES),
+                            new StringField("coverArt", "", Field.Store.YES),
+                            new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
+                            new StringField("path", fullPath, Field.Store.YES)
+                        };
+                        _writer.AddDocument(doc);
+                    }
                 }
                 else
                 {
-                    // Normal music file
-                    var doc = new Document
-                    {
-                        new StringField("id", id, Field.Store.YES),
-                        new StringField("parent", parentId, Field.Store.YES),
-                        new StringField("isDir", "false", Field.Store.YES),
-                        new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
-                        new StringField("artist", "", Field.Store.YES),
-                        new StringField("coverArt", "", Field.Store.YES),
-                        new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
-                        new StringField("path", fullPath, Field.Store.YES)
-                    };
-                    _writer.AddDocument(doc);
+                     _logger.LogInformation("Skipping suppressed or invalid file: {Path}", fullPath);
                 }
             }
-            else if (File.Exists(fullPath))
+            else if (_fileSystem.FileExists(fullPath))
             {
                 _logger.LogDebug("Skipping non-music file: {Path}", fullPath);
             }
@@ -222,9 +264,65 @@ public class LuceneService : IDisposable
         }
     }
 
-    private void IndexDirectoryIncremental(string dirPath, string currentId, string musicRootPath)
+    private void GetCueSuppressionInfo(string dirPath, out HashSet<string> validCues, out HashSet<string> suppressedFiles)
     {
-        var dirInfo = new DirectoryInfo(dirPath);
+        validCues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        suppressedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var dirInfo = _fileSystem.GetDirectoryInfo(dirPath);
+            var cues = dirInfo.GetFiles("*.cue");
+
+            foreach (var cueFile in cues)
+            {
+                try
+                {
+                    var sheet = _cueService.ParseCue(cueFile.FullName);
+                    bool valid = true;
+                    var currentSuppressed = new List<string>();
+
+                    if (sheet.Files.Count == 0) valid = false;
+
+                    foreach (var file in sheet.Files)
+                    {
+                        var audioPath = _cueService.ResolveAudioFile(cueFile.FullName, file.FileName);
+                        if (audioPath != null)
+                        {
+                            currentSuppressed.Add(audioPath);
+                        }
+                        else
+                        {
+                            valid = false;
+                            break;
+                        }
+                    }
+
+                    if (valid)
+                    {
+                        validCues.Add(cueFile.FullName);
+                        foreach (var s in currentSuppressed) suppressedFiles.Add(s);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("CUE file incomplete (missing source), marking invalid: {Path}", cueFile.FullName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error checking CUE validity: {Path}", cueFile.FullName);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting CUE suppression info for: {Path}", dirPath);
+        }
+    }
+
+    private void IndexDirectoryIncremental(string dirPath, string currentId, string musicRootPath)
+        {
+        var dirInfo = _fileSystem.GetDirectoryInfo(dirPath);
         foreach (var subDir in dirInfo.GetDirectories())
         {
             // Only index directories that contain music files
@@ -247,15 +345,30 @@ public class LuceneService : IDisposable
             }
         }
         
+        GetCueSuppressionInfo(dirPath, out var validCues, out var suppressedFiles);
+
         foreach (var file in dirInfo.GetFiles())
         {
             // Only index music files
             if (IsMusicFile(file.FullName))
             {
+                if (suppressedFiles.Contains(file.FullName))
+                {
+                    _logger.LogDebug("Skipping suppressed file: {Path}", file.FullName);
+                    continue;
+                }
+
+                var isCue = file.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase);
+                if (isCue && !validCues.Contains(file.FullName))
+                {
+                    _logger.LogDebug("Skipping invalid CUE: {Path}", file.FullName);
+                    continue;
+                }
+
                 var relativePath = Path.GetRelativePath(musicRootPath, file.FullName).Replace('\\', '/');
                 var fileId = "/" + relativePath;
                 
-                if (file.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase))
+                if (isCue)
                 {
                     _logger.LogInformation("Found CUE file, indexing as directory: {FileName}", file.Name);
                     var doc = new Document
@@ -326,7 +439,7 @@ public class LuceneService : IDisposable
                     };
                     _writer.AddDocument(doc);
                 }
-                var dirInfo = new DirectoryInfo(dirPath);
+                var dirInfo = _fileSystem.GetDirectoryInfo(dirPath);
                 foreach (var subDir in dirInfo.GetDirectories())
                 {
                     // Only index directories that contain music files
@@ -352,6 +465,8 @@ public class LuceneService : IDisposable
                         _logger.LogDebug("Skipping directory (no music files): {SubDirName}", subDir.Name);
                     }
                 }
+                GetCueSuppressionInfo(dirPath, out var validCues, out var suppressedFiles);
+
                 foreach (var file in dirInfo.GetFiles())
                 {
                     try
@@ -360,6 +475,18 @@ public class LuceneService : IDisposable
                         // Check IsMusicFile OR isCue fallback
                         if (IsMusicFile(file.FullName) || isCue)
                         {
+                            if (suppressedFiles.Contains(file.FullName))
+                            {
+                                _logger.LogDebug("Skipping suppressed file: {Path}", file.FullName);
+                                continue;
+                            }
+
+                            if (isCue && !validCues.Contains(file.FullName))
+                            {
+                                _logger.LogDebug("Skipping invalid CUE: {Path}", file.FullName);
+                                continue;
+                            }
+
                             var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
 
                             if (isCue)

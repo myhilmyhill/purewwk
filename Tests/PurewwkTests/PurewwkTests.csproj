@@ -17,12 +17,16 @@
     <PackageReference Include="System.Text.Encoding.CodePages" Version="10.0.2" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <PackageReference Include="Lucene.Net" Version="4.8.0-beta00017" />
+    <PackageReference Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00017" />
+    <PackageReference Include="Moq" Version="4.20.70" />
   </ItemGroup>
-
-
 
   <ItemGroup>
     <Compile Include="..\..\Services\CueService.cs" Link="Services\CueService.cs" />
+    <Compile Include="..\..\Services\CueFolderService.cs" Link="Services\CueFolderService.cs" />
+    <Compile Include="..\..\Services\LuceneService.cs" Link="Services\LuceneService.cs" />
+    <Compile Include="..\..\Services\FileSystem.cs" Link="Services\FileSystem.cs" />
   </ItemGroup>
 
 </Project>

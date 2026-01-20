@@ -10,11 +10,13 @@ namespace repos.Services;
 public class CueService
 {
     private readonly ILogger<CueService> _logger;
+    private readonly IFileSystem _fileSystem;
     private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
 
-    public CueService(ILogger<CueService> logger)
+    public CueService(ILogger<CueService> logger, IFileSystem fileSystem)
     {
         _logger = logger;
+        _fileSystem = fileSystem;
     }
 
     public CueSheet ParseCue(string filePath)
@@ -22,7 +24,7 @@ public class CueService
         byte[] data;
         try
         {
-            data = File.ReadAllBytes(filePath);
+            data = _fileSystem.ReadAllBytes(filePath);
         }
         catch (IOException ex)
         {
@@ -140,14 +142,14 @@ public class CueService
         var cueDir = Path.GetDirectoryName(cuePath) ?? "";
         var fullPath = Path.Combine(cueDir, cueFileName);
         
-        if (File.Exists(fullPath)) return fullPath;
+        if (_fileSystem.FileExists(fullPath)) return fullPath;
 
         // Try same name with common audio extensions
         var baseName = Path.GetFileNameWithoutExtension(cueFileName);
         foreach (var ext in _audioExtensions)
         {
             var p = Path.Combine(cueDir, baseName + ext);
-            if (File.Exists(p)) return p;
+            if (_fileSystem.FileExists(p)) return p;
         }
 
         // Try CUE file's own base name
@@ -155,7 +157,7 @@ public class CueService
         foreach (var ext in _audioExtensions)
         {
             var p = Path.Combine(cueDir, cueBaseName + ext);
-            if (File.Exists(p)) return p;
+            if (_fileSystem.FileExists(p)) return p;
         }
 
         return null;

@@ -19,7 +19,7 @@ public class CueServiceTests
     public CueServiceTests(ITestOutputHelper output)
     {
         _output = output;
-        _cueService = new CueService(NullLogger<CueService>.Instance);
+        _cueService = new CueService(NullLogger<CueService>.Instance, new RealFileSystem());
         
         // Using the absolute path as in the environment
         _musicDir = @"c:\Users\ebyck\source\repos\purewwk-1\Music";
