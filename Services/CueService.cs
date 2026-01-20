@@ -19,18 +19,30 @@ public class CueService
 
     public CueSheet ParseCue(string filePath)
     {
-        string content;
-        try 
+        byte[] data;
+        try
         {
-            content = File.ReadAllText(filePath, new UTF8Encoding(false, true));
+            data = File.ReadAllBytes(filePath);
         }
-        catch (Exception)
+        catch (IOException ex)
         {
-            // Fallback to Shift_JIS for Japanese CUE files
-            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-            content = File.ReadAllText(filePath, Encoding.GetEncoding(932));
+            _logger.LogError(ex, "Failed to read CUE file: {FilePath}", filePath);
+            throw;
         }
+        return ParseCue(data, filePath);
+    }
 
+    public CueSheet ParseCue(byte[] data, string filePath)
+    {
+        string content;
+        // Parse as UTF-8 (strict, will throw if invalid chars found which is expected if we don't support other encodings)
+        content = new UTF8Encoding(false, true).GetString(data);
+
+        return ParseCueContent(content, filePath);
+    }
+
+    private CueSheet ParseCueContent(string content, string filePath)
+    {
         var lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
         var sheet = new CueSheet { Path = filePath };
         CueFile? currentFile = null;
