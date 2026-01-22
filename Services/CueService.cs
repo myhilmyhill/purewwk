@@ -7,17 +7,9 @@ using Microsoft.Extensions.Logging;
 
 namespace repos.Services;
 
-public class CueService
+public class CueService(ILogger<CueService> _logger, IFileSystem _fileSystem)
 {
-    private readonly ILogger<CueService> _logger;
-    private readonly IFileSystem _fileSystem;
     private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
-
-    public CueService(ILogger<CueService> logger, IFileSystem fileSystem)
-    {
-        _logger = logger;
-        _fileSystem = fileSystem;
-    }
 
     public CueSheet ParseCue(string filePath)
     {

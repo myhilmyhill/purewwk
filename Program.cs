@@ -11,7 +11,7 @@ builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddSingleton<IFileSystem, RealFileSystem>();
 builder.Services.AddSingleton<LuceneService>();
-builder.Services.AddSingleton<FileWatcherService>();
+builder.Services.AddHostedService<FileWatcherService>();
 builder.Services.AddSingleton<IHlsCacheStorage>(provider =>
 {
     var config = provider.GetRequiredService<IConfiguration>();
@@ -38,7 +38,6 @@ var app = builder.Build();
 
 // Initialize Lucene index
 var luceneService = app.Services.GetRequiredService<LuceneService>();
-var fileWatcherService = app.Services.GetRequiredService<FileWatcherService>();
 var hlsService = app.Services.GetRequiredService<HlsService>();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
@@ -52,8 +51,7 @@ _ = Task.Run(() =>
     }
 });
 
-// Ensure FileWatcherService is initialized (it starts automatically in constructor)
-_ = fileWatcherService;
+
 
 
 if (app.Environment.IsDevelopment())

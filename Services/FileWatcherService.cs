@@ -2,33 +2,41 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 
 namespace repos.Services;
 
-public class FileWatcherService : IDisposable
+public class FileWatcherService(ILogger<FileWatcherService> _logger, LuceneService _luceneService, IConfiguration _configuration) : IHostedService, IDisposable
 {
-    private readonly ILogger<FileWatcherService> _logger;
-    private readonly LuceneService _luceneService;
-    private readonly IConfiguration _configuration;
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly ConcurrentDictionary<string, DateTime> _pendingChanges = new();
-    private readonly Timer _debounceTimer;
+    private Timer? _debounceTimer;
     private readonly object _lock = new();
     private bool _disposed = false;
 
     private readonly TimeSpan _debounceDelay = TimeSpan.FromSeconds(2); // 2秒のデバウンス
     private readonly string[] _musicExtensions = { ".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".cue" };
 
-    public FileWatcherService(ILogger<FileWatcherService> logger, LuceneService luceneService, IConfiguration configuration)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger = logger;
-        _luceneService = luceneService;
-        _configuration = configuration;
-        
+        _logger.LogInformation("Starting FileWatcherService");
         // デバウンス用タイマー
-        _debounceTimer = new Timer(ProcessPendingChanges, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        _debounceTimer = new Timer(ProcessPendingChanges, null, _debounceDelay, _debounceDelay);
         
         Initialize();
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Stopping FileWatcherService");
+        _debounceTimer?.Change(Timeout.Infinite, 0);
+
+        foreach (var watcher in _watchers)
+        {
+            watcher.EnableRaisingEvents = false;
+        }
+        return Task.CompletedTask;
     }
 
     private void Initialize()

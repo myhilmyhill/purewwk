@@ -6,17 +6,10 @@ using Microsoft.Extensions.Logging;
 
 namespace repos.Services;
 
-public class CueFolderService
+public class CueFolderService(
+    ILogger<CueFolderService> _logger,
+    CueService _cueService)
 {
-    private readonly ILogger<CueFolderService> _logger;
-    private readonly CueService _cueService;
-
-    public CueFolderService(ILogger<CueFolderService> logger, CueService cueService)
-    {
-        _logger = logger;
-        _cueService = cueService;
-    }
-
     /// <summary>
     /// Returns virtual tracks for a CUE file as directory entries.
     /// </summary>
