@@ -1,23 +1,50 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HLS Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        video { width: 100%; margin-top: 20px; background: #000; }
-        .controls { margin-top: 20px; display: flex; gap: 10px; }
-        input[type="text"] { flex-grow: 1; padding: 5px; }
-        button { padding: 5px 15px; cursor: pointer; }
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        video {
+            width: 100%;
+            margin-top: 20px;
+            background: #000;
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 5px;
+        }
+
+        button {
+            padding: 5px 15px;
+            cursor: pointer;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>HLS Browser Player</h1>
-        
+
         <div class="controls">
             <input type="text" id="fileId" placeholder="Enter File ID (e.g., /path/to/music.mp3)" value="/">
             <button onclick="loadSource()">Load & Play</button>
@@ -25,7 +52,7 @@
         <div id="status" style="margin-top: 10px; color: #666;"></div>
 
         <video id="video" controls></video>
-        
+
         <h3>Directory Listing (Click to Play)</h3>
         <div id="dirList"></div>
     </div>
@@ -38,7 +65,7 @@
             var id = document.getElementById('fileId').value;
             // Check if it's likely a directory (ends with / or is just /)
             // or we can just try to fetch directory info first.
-            
+
             fetchDirectory(id);
         }
 
@@ -52,9 +79,9 @@
                 }
                 const data = await response.json();
                 const subsonic = data['subsonic-response'];
-                
+
                 if (subsonic && subsonic.directory && subsonic.directory.child) {
-                     renderDirectory(subsonic.directory);
+                    renderDirectory(subsonic.directory);
                 } else {
                     // If no children, it might be a file or empty dir. Try playing as HLS if not a dir structure.
                     // However, getMusicDirectory usually returns info.
@@ -72,18 +99,18 @@
         function renderDirectory(directory) {
             const list = document.getElementById('dirList');
             list.innerHTML = '';
-            
+
             const upBtn = document.createElement('div');
             if (directory.parent) {
-                 upBtn.innerHTML = `<button onclick="document.getElementById('fileId').value='${directory.parent}'; loadSource()">.. (Up)</button>`;
-                 list.appendChild(upBtn);
+                upBtn.innerHTML = `<button onclick="document.getElementById('fileId').value='${directory.parent}'; loadSource()">.. (Up)</button>`;
+                list.appendChild(upBtn);
             }
 
             directory.child.forEach(item => {
                 const div = document.createElement('div');
                 div.style.padding = '5px';
                 div.style.borderBottom = '1px solid #eee';
-                
+
                 if (item.isDir) {
                     div.innerHTML = `📁 <a href="#" onclick="document.getElementById('fileId').value='${item.id}'; loadSource(); return false;">${item.title || item.name}</a>`;
                 } else {
@@ -104,7 +131,7 @@
                 hls = new Hls();
                 hls.loadSource(videoSrc);
                 hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                hls.on(Hls.Events.MANIFEST_PARSED, function () {
                     video.play();
                     document.getElementById('status').innerText = "Playing: " + id;
                 });
@@ -112,19 +139,23 @@
                     var errorType = data.type;
                     var errorDetails = data.details;
                     var errorFatal = data.fatal;
-                    document.getElementById('status').innerText = "Error: " + errorType + " / " + errorDetails;
+                    // Try to get URL from context or data to show what failed
+                    var url = (data.context && data.context.url) || data.url || "";
+                    document.getElementById('status').innerText = "Error: " + errorType + " / " + errorDetails + (url ? " URL: " + url : "");
+                    console.error("HLS Error:", data);
                 });
             }
             else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = videoSrc;
-                video.addEventListener('loadedmetadata', function() {
+                video.addEventListener('loadedmetadata', function () {
                     video.play();
                 });
             }
         }
-        
+
         // Initial load
         loadSource();
     </script>
 </body>
+
 </html>
