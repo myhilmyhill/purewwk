@@ -124,7 +124,7 @@ public class HlsService
 
             var inputArgs = isCueTrack ? $"{seekArgs} -i \"{fullPath}\"" : $"-i \"{fullPath}\"";
             // Explicitly set start_number to 0 to ensure consistency
-        var commonHlsArgs = $"-f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\"";
+        var commonHlsArgs = $"-f hls -hls_time 3 -hls_list_size 0 -hls_playlist_type event -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\"";
 
             if (bitRates.Length > 0)
             {
