@@ -102,22 +102,44 @@
 
             const upBtn = document.createElement('div');
             if (directory.parent) {
-                upBtn.innerHTML = `<button onclick="document.getElementById('fileId').value='${directory.parent}'; loadSource()">.. (Up)</button>`;
+                const btn = document.createElement('button');
+                btn.textContent = ".. (Up)";
+                btn.onclick = () => {
+                    document.getElementById('fileId').value = directory.parent;
+                    loadSource();
+                };
+                upBtn.appendChild(btn);
                 list.appendChild(upBtn);
             }
 
-            directory.child.forEach(item => {
-                const div = document.createElement('div');
-                div.style.padding = '5px';
-                div.style.borderBottom = '1px solid #eee';
+            if (directory.child) {
+                // Handle case where child might be a single object instead of array
+                const children = Array.isArray(directory.child) ? directory.child : [directory.child];
+                children.forEach(item => {
+                    const div = document.createElement('div');
+                    div.style.padding = '5px';
+                    div.style.borderBottom = '1px solid #eee';
 
-                if (item.isDir) {
-                    div.innerHTML = `📁 <a href="#" onclick="document.getElementById('fileId').value='${item.id}'; loadSource(); return false;">${item.title || item.name}</a>`;
-                } else {
-                    div.innerHTML = `🎵 <a href="#" onclick="playHls('${item.id}'); document.getElementById('fileId').value='${item.id}'; return false;">${item.title || item.name}</a>`;
-                }
-                list.appendChild(div);
-            });
+                    const iconText = item.isDir ? '📁 ' : '🎵 ';
+                    div.appendChild(document.createTextNode(iconText));
+
+                    const a = document.createElement('a');
+                    a.href = "#";
+                    a.textContent = item.title || item.name;
+                    a.onclick = (e) => {
+                        e.preventDefault();
+                        document.getElementById('fileId').value = item.id;
+                        if (item.isDir) {
+                            loadSource();
+                        } else {
+                            playHls(item.id);
+                        }
+                    };
+
+                    div.appendChild(a);
+                    list.appendChild(div);
+                });
+            }
         }
 
         function playHls(id) {
