@@ -1,79 +1,96 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#121212">
     <title>HLS Player</title>
+    <link rel="stylesheet" href="index.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <style>
-        body {
-            font-family: sans-serif;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-
-        #video {
-            width: 100%;
-            margin-top: 20px;
-            background: #000;
-        }
-
-        .controls {
-            margin-top: 20px;
-            display: flex;
-            gap: 10px;
-        }
-
-        input[type="text"] {
-            flex-grow: 1;
-            padding: 5px;
-        }
-
-        button {
-            padding: 5px 15px;
-            cursor: pointer;
-        }
-    </style>
 </head>
 
 <body>
-    <div class="container">
-        <h1>HLS Browser Player</h1>
-
-        <div class="controls">
-            <input type="text" id="fileId" placeholder="Enter File ID (e.g., /path/to/music.mp3)" value="/">
-            <button onclick="loadSource()">Load & Play</button>
+    <header>
+        <div class="header-row">
+            <button id="backBtn" class="icon-btn" onclick="goUp()">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 12H5" />
+                    <path d="M12 19l-7-7 7-7" />
+                </svg>
+            </button>
+            <div id="fileId" class="header-title">Home</div>
         </div>
-        <div id="status" style="margin-top: 10px; color: #666;"></div>
+    </header>
 
-        <audio id="video" controls></audio>
-
-        <h3>Directory Listing (Click to Play)</h3>
+    <main>
         <div id="dirList"></div>
-    </div>
 
-    <script>
-        var video = document.getElementById('video');
+        <template id="dir-item-template">
+            <div class="list-item">
+                <div class="item-icon">
+                    <svg class="icon-dir" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#bb86fc"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z">
+                        </path>
+                    </svg>
+                </div>
+                <div class="item-content">
+                    <div class="item-title"></div>
+                </div>
+            </div>
+        </template>
+
+        <template id="file-item-template">
+            <div class="list-item">
+                <div class="item-icon">
+                    <svg class="icon-file" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 18V5l12-2v13"></path>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                </div>
+                <div class="item-content">
+                    <div class="item-title"></div>
+                </div>
+            </div>
+        </template>
+    </main>
+
+    <footer>
+        <div id="nowPlaying" class="now-playing"></div>
+        <audio id="player" controls></audio>
+    </footer>
+
+    <script module>
+        'use strict';
+        var player = document.getElementById('player');
         var hls = null;
+        var currentParent = null;
+
+        function getHashPath() {
+            return window.location.hash ? decodeURIComponent(window.location.hash.substring(1)) : null;
+        }
 
         function loadSource() {
-            var id = document.getElementById('fileId').value;
-            // Check if it's likely a directory (ends with / or is just /)
-            // or we can just try to fetch directory info first.
-
+            var id = getHashPath() || '/';
             fetchDirectory(id);
+        }
+
+        function goUp() {
+            if (currentParent) {
+                window.location.hash = encodeURIComponent(currentParent);
+            }
         }
 
         async function fetchDirectory(id) {
             try {
                 const response = await fetch(`/rest/getMusicDirectory.view?id=${encodeURIComponent(id)}`);
                 if (!response.ok) {
-                    // Assuming it's a file if directory listing fails (or just try playing it)
                     playHls(id);
                     return;
                 }
@@ -83,11 +100,11 @@
                 if (subsonic && subsonic.directory && subsonic.directory.child) {
                     renderDirectory(subsonic.directory);
                 } else {
-                    // If no children, it might be a file or empty dir. Try playing as HLS if not a dir structure.
-                    // However, getMusicDirectory usually returns info.
-                    // If we inputted a file ID to getMusicDirectory, it might behave differently or return empty.
-                    // Let's assume if the user clicks a file from the list, we play it.
-                    // If they enter a path manually, we try to directory list first, if it fails or looks like a file, we play.
+                    // Try playing as HLS if not a dir, but don't clear status immediately
+                    // Attempting playback
+                    if (id.endsWith('/') || !id.includes('.')) {
+                        // Likely an empty directory or invalid, but do our best
+                    }
                     playHls(id);
                 }
             } catch (e) {
@@ -100,51 +117,45 @@
             const list = document.getElementById('dirList');
             list.innerHTML = '';
 
-            const upBtn = document.createElement('div');
-            if (directory.parent) {
-                const btn = document.createElement('button');
-                btn.textContent = ".. (Up)";
-                btn.onclick = () => {
-                    document.getElementById('fileId').value = directory.parent;
-                    loadSource();
-                };
-                upBtn.appendChild(btn);
-                list.appendChild(upBtn);
-            }
+            updateTextBox(directory.id);
+
+            // Handle parent for Back Button
+            currentParent = directory.parent;
+            const backBtn = document.getElementById('backBtn');
+            backBtn.hidden = backBtn.disabled = !currentParent;
 
             if (directory.child) {
-                // Handle case where child might be a single object instead of array
                 const children = Array.isArray(directory.child) ? directory.child : [directory.child];
+                const dirTemplate = document.getElementById('dir-item-template');
+                const fileTemplate = document.getElementById('file-item-template');
+
                 children.forEach(item => {
-                    const div = document.createElement('div');
-                    div.style.padding = '5px';
-                    div.style.borderBottom = '1px solid #eee';
+                    const clone = (item.isDir ? dirTemplate : fileTemplate).content.cloneNode(true);
 
-                    const iconText = item.isDir ? '📁 ' : '🎵 ';
-                    div.appendChild(document.createTextNode(iconText));
+                    clone.querySelector('.item-title').textContent = item.title || item.name;
 
-                    const a = document.createElement('a');
-                    a.href = "#";
-                    a.textContent = item.title || item.name;
-                    a.onclick = (e) => {
+                    const itemDiv = clone.querySelector('.list-item');
+                    itemDiv.onclick = (e) => {
                         e.preventDefault();
-                        document.getElementById('fileId').value = item.id;
                         if (item.isDir) {
-                            loadSource();
+                            window.location.hash = encodeURIComponent(item.id);
                         } else {
-                            playHls(item.id);
+                            // Pass title explicitly if available, otherwise just ID will be used
+                            playHls(item.id, item.title || item.name);
                         }
                     };
 
-                    div.appendChild(a);
-                    list.appendChild(div);
+                    list.appendChild(clone);
                 });
             }
         }
 
-        function playHls(id) {
+        function playHls(id, title) {
             var videoSrc = '/rest/hls.m3u8?id=' + encodeURIComponent(id);
-            document.getElementById('status').innerText = "Loading: " + videoSrc;
+
+            // Set Now Playing text
+            const displayTitle = title || id.split('/').pop() || "Unknown Title";
+            document.getElementById('nowPlaying').innerText = displayTitle;
 
             if (Hls.isSupported()) {
                 if (hls) {
@@ -152,31 +163,68 @@
                 }
                 hls = new Hls({ startPosition: 0 });
                 hls.loadSource(videoSrc);
-                hls.attachMedia(video);
+                hls.attachMedia(player);
                 hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                    video.play();
-                    document.getElementById('status').innerText = "Playing: " + id;
+                    player.play();
+                    updateMediaSession(displayTitle);
                 });
                 hls.on(Hls.Events.ERROR, function (event, data) {
-                    var errorType = data.type;
-                    var errorDetails = data.details;
-                    var errorFatal = data.fatal;
-                    // Try to get URL from context or data to show what failed
-                    var url = (data.context && data.context.url) || data.url || "";
-                    document.getElementById('status').innerText = "Error: " + errorType + " / " + errorDetails + (url ? " URL: " + url : "");
-                    console.error("HLS Error:", data);
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                statusEl.innerText = "Network Error - trying to recover...";
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                statusEl.innerText = "Media Error - recovering...";
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                statusEl.innerText = "Fatal Error: " + data.details;
+                                hls.destroy();
+                                break;
+                        }
+                    }
                 });
             }
-            else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = videoSrc;
-                video.addEventListener('loadedmetadata', function () {
-                    video.play();
+            else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+                player.src = videoSrc;
+                player.addEventListener('loadedmetadata', function () {
+                    player.play();
+                    updateMediaSession(displayTitle);
                 });
             }
         }
 
+        function updateMediaSession(title) {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: title,
+                });
+            }
+        }
+
+        function updateTextBox(id) {
+            var el = document.getElementById('fileId');
+            el.textContent = id;
+        }
+
         // Initial load
+        window.addEventListener('hashchange', loadSource);
         loadSource();
+
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker registration failed: ', error);
+                    });
+            });
+        }
     </script>
 </body>
 

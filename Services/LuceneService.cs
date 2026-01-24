@@ -291,11 +291,12 @@ public class LuceneService : IDisposable
                         {
                             currentSuppressed.Add(audioPath);
                         }
-                        else
-                        {
-                            valid = false;
-                            break;
-                        }
+                    }
+
+                    // If we have files defined but none resolved, consider it invalid (empty/broken CUE)
+                    if (sheet.Files.Count > 0 && currentSuppressed.Count == 0)
+                    {
+                        valid = false;
                     }
 
                     if (valid)

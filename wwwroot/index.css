@@ -1,0 +1,61 @@
+html {
+  height: 100dvh;
+}
+
+body {
+  height: inherit;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+header {
+  padding: 16px;
+}
+
+main {
+  overflow: scroll;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+}
+
+#dirList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.list-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.2s;
+
+  &:active {
+    background-color: #2a2a2a;
+  }
+}
+
+.item-icon {
+  margin: 16px;
+}
+
+audio {
+  width: 100%;
+}
+
+/* Up Button special styling */
+.up-button {
+  background-color: transparent;
+  margin-bottom: 12px;
+}
+
+.header-title {
+  flex: 1;
+}
