@@ -14,16 +14,14 @@
 
 <body>
     <header>
-        <div class="header-row">
-            <button id="backBtn" class="icon-btn" onclick="goUp()">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M19 12H5" />
-                    <path d="M12 19l-7-7 7-7" />
-                </svg>
-            </button>
-            <div id="fileId" class="header-title">Home</div>
-        </div>
+        <button id="backBtn" onclick="goUp()">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 12H5" />
+                <path d="M12 19l-7-7 7-7" />
+            </svg>
+        </button>
+        <div id="fileId" class="header-title">Home</div>
     </header>
 
     <main>
@@ -59,10 +57,24 @@
                 </div>
             </div>
         </template>
+        <template id="icon-play">
+            <svg class="icon-play" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+        </template>
+
+        <template id="icon-file">
+            <svg class="icon-file" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+        </template>
     </main>
 
     <footer>
-        <div id="nowPlaying" class="now-playing"></div>
         <audio id="player" controls></audio>
     </footer>
 
@@ -71,6 +83,7 @@
         var player = document.getElementById('player');
         var hls = null;
         var currentParent = null;
+        var currentPlayingId = null;
 
         function getHashPath() {
             return window.location.hash ? decodeURIComponent(window.location.hash.substring(1)) : null;
@@ -116,13 +129,14 @@
         function renderDirectory(directory) {
             const list = document.getElementById('dirList');
             list.innerHTML = '';
+            document.querySelector('main').scrollTop = 0;
 
             updateTextBox(directory.id);
 
             // Handle parent for Back Button
             currentParent = directory.parent;
             const backBtn = document.getElementById('backBtn');
-            backBtn.hidden = backBtn.disabled = !currentParent;
+            backBtn.disabled = !currentParent;
 
             if (directory.child) {
                 const children = Array.isArray(directory.child) ? directory.child : [directory.child];
@@ -135,6 +149,9 @@
                     clone.querySelector('.item-title').textContent = item.title || item.name;
 
                     const itemDiv = clone.querySelector('.list-item');
+                    itemDiv.dataset.id = item.id;
+                    itemDiv.dataset.isDir = item.isDir;
+
                     itemDiv.onclick = (e) => {
                         e.preventDefault();
                         if (item.isDir) {
@@ -147,15 +164,35 @@
 
                     list.appendChild(clone);
                 });
+
+                updateIcons();
             }
         }
 
-        function playHls(id, title) {
-            var videoSrc = '/rest/hls.m3u8?id=' + encodeURIComponent(id);
+        function updateIcons() {
+            const items = document.querySelectorAll('.list-item');
+            const playTemplate = document.getElementById('icon-play');
+            const fileTemplate = document.getElementById('icon-file');
 
-            // Set Now Playing text
-            const displayTitle = title || id.split('/').pop() || "Unknown Title";
-            document.getElementById('nowPlaying').innerText = displayTitle;
+            items.forEach(item => {
+                if (item.dataset.isDir === 'true') return; // Skip directories
+
+                const iconContainer = item.querySelector('.item-icon');
+                iconContainer.innerHTML = ''; // Clear existing icon
+
+                if (item.dataset.id === currentPlayingId) {
+                    iconContainer.appendChild(playTemplate.content.cloneNode(true));
+                } else {
+                    iconContainer.appendChild(fileTemplate.content.cloneNode(true));
+                }
+            });
+        }
+
+        function playHls(id, title) {
+            currentPlayingId = id;
+            updateIcons();
+
+            var videoSrc = '/rest/hls.m3u8?id=' + encodeURIComponent(id);
 
             if (Hls.isSupported()) {
                 if (hls) {

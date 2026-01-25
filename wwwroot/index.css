@@ -11,16 +11,28 @@ body {
 }
 
 header {
+  display: flex;
+  align-items: center;
+}
+
+.header-title {
+  flex: 1;
+}
+
+#backBtn {
   padding: 16px;
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:active {
+    background-color: #2a2a2a;
+  }
 }
 
 main {
   overflow: scroll;
-}
-
-.header-row {
-  display: flex;
-  align-items: center;
 }
 
 #dirList {
@@ -48,14 +60,4 @@ main {
 
 audio {
   width: 100%;
-}
-
-/* Up Button special styling */
-.up-button {
-  background-color: transparent;
-  margin-bottom: 12px;
-}
-
-.header-title {
-  flex: 1;
 }
