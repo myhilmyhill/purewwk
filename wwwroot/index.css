@@ -8,6 +8,8 @@ body {
   padding: 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
+  background-color: Canvas;
+  color: CanvasText;
 }
 
 header {
@@ -32,7 +34,9 @@ header {
 }
 
 main {
-  overflow: scroll;
+  overflow-y: auto;
+  view-transition-name: main-content;
+  background-color: inherit;
 }
 
 #dirList {

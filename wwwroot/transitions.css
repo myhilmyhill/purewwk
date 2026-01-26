@@ -1,0 +1,46 @@
+@keyframes slide-in-from-right {
+    from {
+        transform: translateX(100%);
+    }
+
+    to {
+        transform: translateX(0);
+    }
+}
+
+@keyframes slide-out-to-right {
+    from {
+        transform: translateX(0);
+    }
+
+    to {
+        transform: translateX(100%);
+    }
+}
+
+/* Reset default animations and blending for this transition */
+::view-transition-old(main-content),
+::view-transition-new(main-content) {
+    animation: none;
+}
+
+html:active-view-transition-type(forward) {
+    &::view-transition-new(main-content) {
+        animation: slide-in-from-right 100ms ease-out both;
+    }
+
+    &::view-transition-old(main-content) {
+        opacity: 1;
+    }
+}
+
+html:active-view-transition-type(back) {
+    &::view-transition-old(main-content) {
+        animation: slide-out-to-right 100ms ease-out both;
+        z-index: 1;
+    }
+
+    &::view-transition-new(main-content) {
+        opacity: 1;
+    }
+}
