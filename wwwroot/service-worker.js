@@ -1,4 +1,4 @@
-const CACHE_NAME = 'music-cache-v1';
+const CACHE_NAME = 'music-cache-v2';
 const MAX_CACHE_SIZE = 500 * 1024 * 1024; // 500 MB limit
 const DB_NAME = 'music-cache-db';
 const STORE_NAME = 'entries';
@@ -8,6 +8,8 @@ const PRECACHE_URLS = [
     '/',
     '/index.html',
     '/index.css',
+    '/manifest.json',
+    '/icon.svg',
     'https://cdn.jsdelivr.net/npm/hls.js@latest' // External CDN might be tricky with CORS, but hls.js usually allows it.
 ];
 
@@ -120,7 +122,15 @@ self.addEventListener('activate', event => {
     event.waitUntil(
         Promise.all([
             self.clients.claim(),
-            // Clean up other caches if logic changes, simplified here
+            caches.keys().then(cacheNames => {
+                return Promise.all(
+                    cacheNames.map(cacheName => {
+                        if (cacheName !== CACHE_NAME) {
+                            return caches.delete(cacheName);
+                        }
+                    })
+                );
+            })
         ])
     );
 });
