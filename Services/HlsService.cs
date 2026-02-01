@@ -129,12 +129,12 @@ public class HlsService
             if (bitRates.Length > 0)
             {
                 var bitRate = bitRates[0];
-                ffmpegArgs = $"-y -v error {inputArgs} -vn -c:a aac -b:a {bitRate}k {commonHlsArgs} \"{playlistPath}\"";
+                ffmpegArgs = $"-y -v error {inputArgs} -vn -af volume=replaygain=track -c:a aac -b:a {bitRate}k {commonHlsArgs} \"{playlistPath}\"";
                 _logger.LogDebug("Using single bitrate: {BitRate}k", bitRate);
             }
             else
             {
-                ffmpegArgs = $"-y -v error {inputArgs} -vn -c:a aac {commonHlsArgs} \"{playlistPath}\"";
+                ffmpegArgs = $"-y -v error {inputArgs} -vn -af volume=replaygain=track -c:a aac {commonHlsArgs} \"{playlistPath}\"";
                 _logger.LogDebug("Using default bitrate");
             }
 

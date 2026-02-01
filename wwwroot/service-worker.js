@@ -1,19 +1,9 @@
-const CACHE_NAME = 'music-cache-v2';
+'use strict';
+const CACHE_NAME = 'music-cache-v4';
 const MAX_CACHE_SIZE = 500 * 1024 * 1024; // 500 MB limit
 const DB_NAME = 'music-cache-db';
 const STORE_NAME = 'entries';
 
-// Precache the app shell
-const PRECACHE_URLS = [
-    '/',
-    '/index.html',
-    '/index.css',
-    '/manifest.json',
-    '/icon.svg',
-    'https://cdn.jsdelivr.net/npm/hls.js@latest' // External CDN might be tricky with CORS, but hls.js usually allows it.
-];
-
-// IndexedDB Helper Functions
 function openDB() {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, 1);
@@ -44,32 +34,21 @@ async function addEntryToDB(url, size) {
     }
 }
 
-async function getTotalSize() {
-    try {
-        const db = await openDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            let total = 0;
-            const req = store.openCursor();
-            req.onsuccess = (e) => {
-                const cursor = e.target.result;
-                if (cursor) {
-                    total += cursor.value.size || 0;
-                    cursor.continue();
-                } else {
-                    resolve(total);
-                }
-            };
-            req.onerror = () => reject(tx.error);
-        });
-    } catch (e) {
-        return 0;
-    }
-}
-
 async function enforceLimit() {
-    let currentSize = await getTotalSize();
+    let currentSize;
+    try {
+        if (navigator.storage && navigator.storage.estimate) {
+            const estimate = await navigator.storage.estimate();
+            currentSize = estimate.usage;
+        } else {
+            console.warn('StorageManager API not available.');
+            return;
+        }
+    } catch (e) {
+        console.error('Error getting storage estimate:', e);
+        return;
+    }
+
     if (currentSize <= MAX_CACHE_SIZE) return;
 
     try {
@@ -110,14 +89,6 @@ async function enforceLimit() {
     }
 }
 
-self.addEventListener('install', event => {
-    event.waitUntil(
-        caches.open(CACHE_NAME)
-            .then(cache => cache.addAll(PRECACHE_URLS))
-            .then(() => self.skipWaiting())
-    );
-});
-
 self.addEventListener('activate', event => {
     event.waitUntil(
         Promise.all([
@@ -135,29 +106,57 @@ self.addEventListener('activate', event => {
     );
 });
 
-self.addEventListener('fetch', event => {
+self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
-
-    // Skip non-GET
     if (event.request.method !== 'GET') return;
 
-    // Determine strategy
-    // 1. App Shell -> Stale While Revalidate
-    if (PRECACHE_URLS.includes(url.pathname) || PRECACHE_URLS.includes(url.href)) {
+    // 2. Intercept Directory Listing to check for Cached items
+    if (url.pathname === '/rest/getMusicDirectory.view') {
         event.respondWith(
-            caches.open(CACHE_NAME).then(async cache => {
-                const cachedResponse = await cache.match(event.request);
-                const fetchPromise = fetch(event.request).then(networkResponse => {
-                    cache.put(event.request, networkResponse.clone());
-                    return networkResponse;
-                });
-                return cachedResponse || fetchPromise;
-            })
+            (async () => {
+                try {
+                    const response = await fetch(event.request);
+                    if (!response.ok) return response;
+
+                    const clone = response.clone();
+                    const data = await clone.json();
+
+                    if (data['subsonic-response']?.directory?.child) {
+                        const cache = await caches.open(CACHE_NAME);
+                        let children = data['subsonic-response'].directory.child;
+                        // Handle single item or array
+                        const items = Array.isArray(children) ? children : [children];
+
+                        await Promise.all(items.map(async (item) => {
+                            if (!item.isDir) {
+                                const hlsUrl = `/rest/hls.m3u8?id=${encodeURIComponent(item.id)}`;
+                                const fullUrl = new URL(hlsUrl, self.location.origin).href;
+                                const match = await cache.match(fullUrl);
+                                item.cached = !!match;
+                            }
+                        }));
+
+                        const newHeaders = new Headers(response.headers);
+                        newHeaders.delete('content-length');
+                        newHeaders.delete('content-encoding');
+
+                        return new Response(JSON.stringify(data), {
+                            status: response.status,
+                            statusText: response.statusText,
+                            headers: newHeaders
+                        });
+                    }
+                    return response;
+                } catch (e) {
+                    console.error('Directory cache check failed:', e);
+                    return fetch(event.request);
+                }
+            })()
         );
         return;
     }
 
-    // 2. Media Segments and Playlist
+    // 3. Media Segments and Playlist
     // Logic: If it looks like music/video, Cache First (or Network First for playlist)
     // Actually, we want to cache "downloaded music".
     // We treat everything that matches media types as candidates.
@@ -169,89 +168,60 @@ self.addEventListener('fetch', event => {
             const cachedResponse = await cache.match(event.request);
 
             if (cachedResponse) {
-                // If it's a playlist (.m3u8), we might want to check network for updates? 
-                // But for "downloaded music", usually we want the cached version.
-                // However, if the user plays a new file, we need to fetch it.
-                // Simple Cache-First is dangerous for dynamic content but fine for static segments.
-                // Assuming .ts segments are immutable.
-                // .m3u8 might change.
-                if (url.pathname.endsWith('.m3u8')) {
-                    // Network First for playlists
-                    try {
-                        const networkResponse = await fetch(event.request);
-                        if (networkResponse.ok) {
-                            const clonedRes = networkResponse.clone();
-                            const blob = await clonedRes.blob(); // Read body to get size? Or clone again?
-                            // Putting in cache consumes the body from the put() argument. 
-                            // We need to be careful with streams.
-
-                            // Let's just put it.
-                            cache.put(event.request, networkResponse.clone());
-                            // Update DB size (approximate for playlist)
-                            addEntryToDB(event.request.url, parseInt(networkResponse.headers.get('content-length') || '1000'));
-                            enforceLimit();
-
-                            return networkResponse;
-                        }
-                    } catch (e) {
-                        return cachedResponse; // Fallback to cache
-                    }
-                }
-
-                // For other cached stuff (segments), return cache
+                // Return cached response immediately (Cache First)
+                // We only cache complete playlists now, so this is safe.
                 return cachedResponse;
             }
 
             // Not in cache, fetch it
-            try {
-                const networkResponse = await fetch(event.request);
+            const networkResponse = await fetch(event.request);
 
-                // Check if we should cache this response
-                // Criteria: 200 OK, and correct content type
-                if (networkResponse.ok) {
-                    const contentType = networkResponse.headers.get('content-type') || '';
-                    const shouldCache =
-                        url.pathname.endsWith('.ts') ||
-                        url.pathname.endsWith('.m4s') ||
-                        contentType.includes('audio/') ||
-                        contentType.includes('video/') ||
-                        contentType.includes('application/vnd.apple.mpegurl') ||
-                        contentType.includes('application/x-mpegURL');
+            // Check if we should cache this response
+            // Criteria: 200 OK, and correct content type
+            if (networkResponse.status === 206) {
+                return networkResponse;
+            }
 
-                    if (shouldCache) {
-                        const clonedForCache = networkResponse.clone();
-                        // We can't easily get the size of a stream without reading it.
-                        // Content-Length header is often present for static files.
-                        let size = parseInt(networkResponse.headers.get('content-length'));
+            if (networkResponse.ok) {
+                // Special handling for playlists to ensure completeness
+                if (url.pathname === '/rest/hls.m3u8') {
+                    const clonedRes = networkResponse.clone();
+                    const text = await clonedRes.text();
 
-                        // If Content-Length is missing, we might need to read the blob
-                        if (isNaN(size)) {
-                            // If we convert to blob to read size, we consume the stream.
-                            // We can clone -> blob -> put.
-                            // But we need to return the original networkResponse to the browser.
-                            const blobPromise = clonedForCache.blob();
-                            blobPromise.then(blob => {
-                                cache.put(event.request, new Response(blob, {
-                                    status: networkResponse.status,
-                                    statusText: networkResponse.statusText,
-                                    headers: networkResponse.headers
-                                }));
-                                addEntryToDB(event.request.url, blob.size);
-                                enforceLimit();
-                            });
-                        } else {
-                            cache.put(event.request, clonedForCache);
-                            addEntryToDB(event.request.url, size);
+                    if (text.includes('#EXT-X-ENDLIST')) {
+                        cache.put(event.request, new Response(text, {
+                            status: networkResponse.status,
+                            statusText: networkResponse.statusText,
+                            headers: networkResponse.headers
+                        }));
+                        addEntryToDB(event.request.url, text.length);
+                        enforceLimit();
+                    }
+                    // If incomplete, we do NOT cache it.
+                } else if (url.pathname === '/hls') {
+                    // Logic for segments (TS, M4S, etc.)
+                    const clonedForCache = networkResponse.clone();
+                    let size = parseInt(networkResponse.headers.get('content-length'));
+
+                    if (isNaN(size)) {
+                        const blobPromise = clonedForCache.blob();
+                        blobPromise.then(blob => {
+                            cache.put(event.request, new Response(blob, {
+                                status: networkResponse.status,
+                                statusText: networkResponse.statusText,
+                                headers: networkResponse.headers
+                            }));
+                            addEntryToDB(event.request.url, blob.size);
                             enforceLimit();
-                        }
+                        });
+                    } else {
+                        cache.put(event.request, clonedForCache);
+                        addEntryToDB(event.request.url, size);
+                        enforceLimit();
                     }
                 }
-                return networkResponse;
-            } catch (error) {
-                // If offline and not in cache
-                // Maybe return a fallback placeholder if appropriate?
-                throw error;
             }
+            return networkResponse;
         })()
     );
 });

@@ -48,7 +48,7 @@ main {
 
 .list-item {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   cursor: pointer;
   text-decoration: none;
@@ -60,6 +60,10 @@ main {
 }
 
 .item-icon {
+  margin: 16px;
+}
+
+.item-status {
   margin: 16px;
 }
 
