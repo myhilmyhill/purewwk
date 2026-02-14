@@ -10,6 +10,10 @@ services:
       - ./Music:/app/Music
       - music_index_vol:/app/music_index
       - hls_segments_vol:/app/hls_segments
+    # To run CLI commands:
+    # docker-compose run --rm purewwk --rebuild-index
+    # docker-compose run --rm purewwk --clear-cache
+    # docker-compose run --rm purewwk --help
 
 volumes:
   music_index_vol:
