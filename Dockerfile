@@ -4,13 +4,22 @@ FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 ARG TARGETARCH
 WORKDIR /source
 
-# Copy project file and restore as distinct layers
-COPY --link *.csproj .
-RUN dotnet restore -a $TARGETARCH
+# Copy project files and restore as distinct layers
+COPY --link *.sln .
+COPY --link repos.csproj .
+COPY --link PluginBase/*.csproj ./PluginBase/
+COPY --link HlsPlugin/*.csproj ./HlsPlugin/
+RUN dotnet restore purewwk.sln -a $TARGETARCH
 
-# Copy source code and publish app
+# Copy source code
 COPY --link . .
-RUN dotnet publish -a $TARGETARCH --no-restore -o /app
+
+# Publish main app
+RUN dotnet publish repos.csproj -a $TARGETARCH --no-restore -o /app
+
+# Publish PluginBase (though usually included with repos)
+# Publish HlsPlugin to /app/plugins/
+RUN dotnet publish HlsPlugin/HlsPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
 
 
 # Runtime stage

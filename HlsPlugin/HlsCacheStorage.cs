@@ -1,14 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace repos.Services;
-
-public class HlsCacheEntry
-{
-    public string Content { get; set; } = string.Empty;
-    public string CacheDirectory { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; }
-    public DateTime LastAccessed { get; set; }
-}
+namespace PureWwk.Plugins.Hls;
 
 public interface IHlsCacheStorage
 {
@@ -16,6 +8,14 @@ public interface IHlsCacheStorage
     Task SetAsync(string key, HlsCacheEntry entry);
     Task RemoveAsync(string key);
     Task CleanupExpiredEntriesAsync();
+}
+
+public class HlsCacheEntry
+{
+    public string Content { get; set; } = string.Empty;
+    public string CacheDirectory { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime LastAccessed { get; set; }
 }
 
 public class HlsCacheStorage : IHlsCacheStorage

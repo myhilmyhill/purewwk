@@ -1,13 +1,17 @@
 using System.Diagnostics;
-using System.Linq;
+using System.Collections.Generic;
+using System.IO;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using PureWwk.Plugin.Abstractions;
 
-namespace repos.Services;
+namespace PureWwk.Plugins.Hls;
 
 public class HlsService
 {
     private readonly ILogger<HlsService> _logger;
     private readonly IConfiguration _configuration;
-    private readonly LuceneService _luceneService;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IHlsCacheStorage _cacheStorage;
     private readonly bool _cacheEnabled;
@@ -16,18 +20,18 @@ public class HlsService
     private readonly Dictionary<string, (CancellationTokenSource Cts, string VariantKey, DateTime StartTime)> _activeProcesses = new();
     private readonly object _processLock = new object();
 
-    public HlsService(ILogger<HlsService> logger, IConfiguration configuration, LuceneService luceneService, IHttpContextAccessor httpContextAccessor, IHlsCacheStorage cacheStorage)
+    public HlsService(ILogger<HlsService> logger, IConfiguration configuration, IHttpContextAccessor httpContextAccessor, IHlsCacheStorage cacheStorage)
     {
         _logger = logger;
         _configuration = configuration;
-        _luceneService = luceneService;
         _httpContextAccessor = httpContextAccessor;
         _cacheStorage = cacheStorage;
         _cacheEnabled = configuration.GetValue<bool>("HlsCache:Enabled", true);
     }
 
-    public async Task<string> GenerateHlsPlaylist(string id, int[] bitRates, string? audioTrack)
+    public async Task<string> GenerateHlsPlaylist(MediaFileMetadata metadata, int[] bitRates, string? audioTrack)
     {
+        var id = metadata.Id;
         var variantKey = BuildVariantKey(bitRates, audioTrack);
         var key = $"{id}/{variantKey}";
         
@@ -79,26 +83,17 @@ public class HlsService
             Directory.CreateDirectory(cacheDir);
             _logger.LogDebug("HLS cache directory created: {CacheDir}", cacheDir);
 
-            // Get file path from Lucene index
-            _logger.LogDebug("Looking for file with id: {Id}", id);
-
-            var fileDoc = _luceneService.GetDocumentById(id);
-            if (fileDoc == null || fileDoc["isDir"] == "true")
-            {
-                throw new FileNotFoundException("Media file not found: " + id);
-            }
-
-            var fullPath = fileDoc["path"];
+            var fullPath = metadata.Path;
 
             // Check for CUE track metadata
-            bool isCueTrack = fileDoc.ContainsKey("isCueTrack") && fileDoc["isCueTrack"] == "true";
+            bool isCueTrack = metadata.Attributes.ContainsKey("isCueTrack") && metadata.Attributes["isCueTrack"] == "true";
             double cueStart = 0;
             double cueDuration = 0;
 
             if (isCueTrack)
             {
-                if (fileDoc.ContainsKey("cueStart")) double.TryParse(fileDoc["cueStart"], out cueStart);
-                if (fileDoc.ContainsKey("cueDuration")) double.TryParse(fileDoc["cueDuration"], out cueDuration);
+                if (metadata.Attributes.ContainsKey("cueStart")) double.TryParse(metadata.Attributes["cueStart"], out cueStart);
+                if (metadata.Attributes.ContainsKey("cueDuration")) double.TryParse(metadata.Attributes["cueDuration"], out cueDuration);
                 _logger.LogDebug("Detected CUE track. Source: {Source}, Start: {Start}, Duration: {Duration}", fullPath, cueStart, cueDuration);
             }
 

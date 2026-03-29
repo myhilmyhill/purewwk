@@ -14,14 +14,14 @@ public class MusicController : ControllerBase
 {
     private readonly ILogger<MusicController> _logger;
     private readonly LuceneService _luceneService;
-    private readonly HlsService _hlsService;
+    private readonly PluginManager _pluginManager;
     private readonly IConfiguration _configuration;
 
-    public MusicController(ILogger<MusicController> logger, LuceneService luceneService, HlsService hlsService, IConfiguration configuration)
+    public MusicController(ILogger<MusicController> logger, LuceneService luceneService, PluginManager pluginManager, IConfiguration configuration)
     {
         _logger = logger;
         _luceneService = luceneService;
-        _hlsService = hlsService;
+        _pluginManager = pluginManager;
         _configuration = configuration;
     }
 
@@ -81,25 +81,49 @@ public class MusicController : ControllerBase
     {
         try
         {
-            // デバッグ情報をログに出力
-            _logger.LogDebug("HLS request received - ID: {Id}, BitRate: {BitRate}", id, bitRate);
+            var fileDoc = _luceneService.GetDocumentById(id);
+            if (fileDoc == null) return NotFound();
 
-            var playlist = await _hlsService.GenerateHlsPlaylist(id, new[] { bitRate }, audioTrack);
-            Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
-            Response.Headers["Pragma"] = "no-cache";
-            Response.Headers["Expires"] = "0";
-            return Content(playlist, "application/vnd.apple.mpegurl");
-        }
-        catch (FileNotFoundException ex)
-        {
-            _logger.LogWarning(ex, "File not found: {Message}", ex.Message);
-            return NotFound($"Media file not found for id: {id}");
+            var extension = Path.GetExtension(fileDoc["path"]).ToLowerInvariant();
+            var plugin = _pluginManager.GetPluginForExtension(extension);
+
+            if (plugin == null)
+            {
+                return BadRequest($"No plugin found for extension {extension}");
+            }
+
+            var metadata = new PureWwk.Plugin.Abstractions.MediaFileMetadata
+            {
+                Id = id,
+                Path = fileDoc["path"],
+                Attributes = fileDoc
+            };
+
+            return await plugin.HandlePlaybackAsync(metadata, HttpContext);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error generating HLS playlist: {Message}", ex.Message);
-            return StatusCode(500, $"Error generating HLS playlist: {ex.Message}");
+            _logger.LogError(ex, "Error in playback endpoint: {Message}", ex.Message);
+            return StatusCode(500, $"Error: {ex.Message}");
         }
+    }
+
+    [HttpGet("playback-info")]
+    public IActionResult GetPlaybackInfo(string id)
+    {
+        var fileDoc = _luceneService.GetDocumentById(id);
+        if (fileDoc == null) return NotFound();
+
+        var extension = Path.GetExtension(fileDoc["path"]).ToLowerInvariant();
+        var plugin = _pluginManager.GetPluginForExtension(extension);
+
+        if (plugin == null) return NotFound("No plugin for this extension");
+
+        return Ok(new
+        {
+            PlayerType = plugin.GetPlayerType(extension),
+            // Plugin could also return more info here
+        });
     }
 
     [HttpGet("download.view")]
@@ -127,22 +151,11 @@ public class MusicController : ControllerBase
 
             _logger.LogDebug("Serving original file: {FullPath}", fullPath);
 
-            // Get MIME type based on file extension
+            // Get MIME type based on plugin
             var extension = Path.GetExtension(fullPath).ToLowerInvariant();
-            var contentType = extension switch
-            {
-                ".mp3" => "audio/mpeg",
-                ".flac" => "audio/flac",
-                ".wav" => "audio/wav",
-                ".ogg" => "audio/ogg",
-                ".opus" => "audio/opus",
-                ".m4a" => "audio/mp4",
-                ".aac" => "audio/aac",
-                ".wv" => "audio/x-wavpack",
-                ".ape" => "audio/x-ape",
-                ".wma" => "audio/x-ms-wma",
-                _ => "application/octet-stream"
-            };
+            var plugin = _pluginManager.GetPluginForExtension(extension);
+            
+            var contentType = plugin?.GetMimeType(extension) ?? "application/octet-stream";
 
             // Set the filename for download
             var fileName = Path.GetFileName(fullPath);

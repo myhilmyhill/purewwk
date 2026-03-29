@@ -12,17 +12,12 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IFileSystem, RealFileSystem>();
 builder.Services.AddSingleton<LuceneService>();
 builder.Services.AddHostedService<FileWatcherService>();
-builder.Services.AddSingleton<IHlsCacheStorage>(provider =>
-{
-    var config = provider.GetRequiredService<IConfiguration>();
-    var logger = provider.GetRequiredService<ILogger<HlsCacheStorage>>();
-    var maxSize = config.GetValue<int>("HlsCache:MaxSize", 100);
-    var maxAgeMinutes = config.GetValue<int>("HlsCache:MaxAgeMinutes", 60);
-    return new HlsCacheStorage(logger, maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
-});
-builder.Services.AddSingleton<HlsService>();
 builder.Services.AddSingleton<CueService>();
 builder.Services.AddSingleton<CueFolderService>();
+
+// Load Plugins
+PluginManager.LoadPlugins(builder.Services, builder.Configuration);
+builder.Services.AddSingleton<PluginManager>();
 
 
 // Support Shift_JIS and other encodings
@@ -38,7 +33,6 @@ var app = builder.Build();
 
 // Initialize Lucene index
 var luceneService = app.Services.GetRequiredService<LuceneService>();
-var hlsService = app.Services.GetRequiredService<HlsService>();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
 _ = Task.Run(() =>
@@ -73,5 +67,6 @@ if (app.Environment.IsDevelopment())
 app.UseStaticFiles();
 
 app.MapControllers();
+app.MapGet("/", () => Results.Ok());
 
 app.Run();

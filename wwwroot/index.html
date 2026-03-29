@@ -196,7 +196,7 @@
                             window.location.hash = encodeURIComponent(item.id);
                         } else {
                             // Pass title explicitly if available, otherwise just ID will be used
-                            playHls(item.id, item.title || item.name);
+                            playFile(item.id, item.title || item.name);
                         }
                     };
 
@@ -224,6 +224,26 @@
                     iconContainer.appendChild(fileTemplate.content.cloneNode(true));
                 }
             });
+        }
+
+        async function playFile(id, title) {
+            try {
+                const infoResp = await fetch(`/rest/playback-info?id=${encodeURIComponent(id)}`);
+                if (!infoResp.ok) {
+                    console.error("Failed to get playback info");
+                    return;
+                }
+                const info = await infoResp.json();
+                
+                if (info.playerType === 'hls') {
+                    playHls(id, title);
+                } else {
+                    // Fallback or other player types
+                    console.warn("Unsupported player type:", info.playerType);
+                }
+            } catch (e) {
+                console.error("Playback info fetch failed", e);
+            }
         }
 
         function playHls(id, title) {
