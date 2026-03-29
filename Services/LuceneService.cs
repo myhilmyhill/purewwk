@@ -24,7 +24,7 @@ public class LuceneService : IDisposable
     private readonly Lucene.Net.Analysis.Analyzer _analyzer;
     private readonly IndexWriter _writer;
     private readonly LuceneVersion _version = LuceneVersion.LUCENE_48;
-    private readonly string[] _musicExtensions = [".mp3", ".flac", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".wma", ".cue"];
+    private readonly string[] _musicExtensions = [".mp3", ".flac", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".wma", ".cue", ".mid", ".midi"];
     // Supported audio extensions for CUE source file detection
     private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
 

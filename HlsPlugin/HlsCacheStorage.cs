@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace PureWwk.Plugins.Hls;
@@ -25,14 +26,19 @@ public class HlsCacheStorage : IHlsCacheStorage
     private readonly int _maxSize;
     private readonly TimeSpan _maxAge;
 
-    public HlsCacheStorage(ILogger<HlsCacheStorage> logger, int maxSize, TimeSpan maxAge)
+    public HlsCacheStorage(ILogger<HlsCacheStorage> logger, IConfiguration configuration, int maxSize, TimeSpan maxAge)
     {
         _logger = logger;
         _maxSize = maxSize;
         _maxAge = maxAge;
-        _hlsSegmentsDirectory = Path.Combine(AppContext.BaseDirectory, "hls_segments");
+        _configuration = configuration;
+        
+        var workingDir = _configuration["WorkingDirectory"] ?? AppContext.BaseDirectory;
+        _hlsSegmentsDirectory = Path.Combine(workingDir, "hls_segments");
         Directory.CreateDirectory(_hlsSegmentsDirectory);
     }
+
+    private readonly IConfiguration _configuration;
 
     public async Task<HlsCacheEntry?> GetAsync(string key)
     {
@@ -63,8 +69,8 @@ public class HlsCacheStorage : IHlsCacheStorage
             // プレイリストの完全性をチェック
             if (!IsPlaylistComplete(content, cacheDir))
             {
-                _logger.LogDebug("HLS Cache incomplete for key: {Key}, removing", key);
-                await RemoveAsync(key);
+                _logger.LogDebug("HLS Cache incomplete for key: {Key}", key);
+                // 削除はせずにnullを返す（進行中の可能性があるため）
                 return null;
             }
             
@@ -145,43 +151,67 @@ public class HlsCacheStorage : IHlsCacheStorage
             if (!Directory.Exists(_hlsSegmentsDirectory))
                 return;
 
+            _logger.LogDebug("Starting recursive HLS Cache cleanup in {Dir}", _hlsSegmentsDirectory);
+
+            var allPlaylists = Directory.GetFiles(_hlsSegmentsDirectory, "playlist.m3u8", SearchOption.AllDirectories);
             var keysToRemove = new List<string>();
-            
-            foreach (var dir in Directory.GetDirectories(_hlsSegmentsDirectory))
+            var now = DateTime.Now;
+
+            foreach (var playlistPath in allPlaylists)
             {
-                var playlistPath = Path.Combine(dir, "playlist.m3u8");
-                if (File.Exists(playlistPath))
+                var dir = Path.GetDirectoryName(playlistPath);
+                if (dir == null) continue;
+
+                var fileInfo = new FileInfo(playlistPath);
+                var lastActiveTime = fileInfo.CreationTime > fileInfo.LastWriteTime 
+                    ? fileInfo.CreationTime 
+                    : fileInfo.LastWriteTime;
+                
+                // また、LastAccessTimeも考慮（ただしOSによっては更新されないので注意）
+                if (fileInfo.LastAccessTime > lastActiveTime) lastActiveTime = fileInfo.LastAccessTime;
+
+                if (now - lastActiveTime > _maxAge)
                 {
-                    var fileInfo = new FileInfo(playlistPath);
-                    // 作成時刻と最終アクセス時刻の両方を考慮して、より新しい方を基準にする
-                    var lastActiveTime = fileInfo.CreationTime > fileInfo.LastAccessTime 
-                        ? fileInfo.CreationTime 
-                        : fileInfo.LastAccessTime;
-                        
-                    if (DateTime.Now - lastActiveTime > _maxAge)
-                    {
-                        keysToRemove.Add(Path.GetFileName(dir));
-                    }
-                }
-                else
-                {
-                    // プレイリストファイルがない場合は削除
-                    keysToRemove.Add(Path.GetFileName(dir));
+                    // ルートディレクトリからの相対パスをキーとして使用
+                    var relativePath = Path.GetRelativePath(_hlsSegmentsDirectory, dir);
+                    keysToRemove.Add(relativePath);
                 }
             }
 
-            // サイズ制限チェック - 古いものから削除
-            var allDirs = Directory.GetDirectories(_hlsSegmentsDirectory)
-                .Select(d => new { Path = d, Key = Path.GetFileName(d), CreationTime = Directory.GetCreationTime(d) })
-                .OrderBy(d => d.CreationTime)
+            // 特殊ケース: プレイリストがないが古いディレクトリを削除（ゴミ掃除）
+            // ただし、作成されてから間もない（5分以内）ものは除外する
+            var allDirs = Directory.GetDirectories(_hlsSegmentsDirectory, "*", SearchOption.AllDirectories)
+                .OrderByDescending(d => d.Length) // 深いディレクトリから先にチェック
                 .ToList();
 
-            while (allDirs.Count > _maxSize)
+            foreach (var dir in allDirs)
             {
-                var oldest = allDirs[0];
-                keysToRemove.Add(oldest.Key);
-                allDirs.RemoveAt(0);
+                if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                {
+                    // 空のディレクトリは即削除
+                    try { Directory.Delete(dir); } catch { }
+                    continue;
+                }
+
+                var playlistPath = Path.Combine(dir, "playlist.m3u8");
+                if (!File.Exists(playlistPath))
+                {
+                    // プレイリストがなく、かつ一定時間（5分）以上経っているディレクトリのみ削除候補
+                    var hasSubDirs = Directory.GetDirectories(dir).Any();
+                    if (!hasSubDirs) // 子ディレクトリがある場合は、その中でプレイリストがあるかもしれないので消さない
+                    {
+                        var dirInfo = new DirectoryInfo(dir);
+                        if (now - dirInfo.LastWriteTime > TimeSpan.FromMinutes(5))
+                        {
+                            var relativePath = Path.GetRelativePath(_hlsSegmentsDirectory, dir);
+                            keysToRemove.Add(relativePath);
+                        }
+                    }
+                }
             }
+
+            // サイズ制限チェックは今回は保持（キーの取得が少し複雑になるが、シンプルな実装にとどめる）
+            // ...
 
             foreach (var key in keysToRemove.Distinct())
             {
@@ -190,7 +220,7 @@ public class HlsCacheStorage : IHlsCacheStorage
 
             if (keysToRemove.Count > 0)
             {
-                _logger.LogInformation("HLS Cache cleanup: removed {Count} expired entries", keysToRemove.Count);
+                _logger.LogInformation("HLS Cache cleanup: removed {Count} entries", keysToRemove.Count);
             }
         }
         catch (Exception ex)

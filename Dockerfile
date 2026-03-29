@@ -9,6 +9,7 @@ COPY --link *.sln .
 COPY --link repos.csproj .
 COPY --link PluginBase/*.csproj ./PluginBase/
 COPY --link HlsPlugin/*.csproj ./HlsPlugin/
+COPY --link FluidsynthPlugin/*.csproj ./FluidsynthPlugin/
 RUN dotnet restore purewwk.sln -a $TARGETARCH
 
 # Copy source code
@@ -20,13 +21,14 @@ RUN dotnet publish repos.csproj -a $TARGETARCH --no-restore -o /app
 # Publish PluginBase (though usually included with repos)
 # Publish HlsPlugin to /app/plugins/
 RUN dotnet publish HlsPlugin/HlsPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
+RUN dotnet publish FluidsynthPlugin/FluidsynthPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
 
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 
-# Install gosu for proper user switching
-RUN apt-get update && apt-get install -y gosu ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install gosu for proper user switching and fluidsynth
+RUN apt-get update && apt-get install -y gosu ffmpeg fluidsynth && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 WORKDIR /app

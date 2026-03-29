@@ -15,7 +15,7 @@ public class FileWatcherService(ILogger<FileWatcherService> _logger, LuceneServi
     private bool _disposed = false;
 
     private readonly TimeSpan _debounceDelay = TimeSpan.FromSeconds(2); // 2秒のデバウンス
-    private readonly string[] _musicExtensions = { ".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".cue" };
+    private readonly string[] _musicExtensions = { ".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".cue", ".mid", ".midi" };
 
     public Task StartAsync(CancellationToken cancellationToken)
     {

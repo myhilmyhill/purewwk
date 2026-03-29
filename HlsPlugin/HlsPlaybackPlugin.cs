@@ -108,7 +108,7 @@ public class HlsPluginInitializer : IPluginInitializer
             var logger = provider.GetRequiredService<ILogger<HlsCacheStorage>>();
             var maxSize = configuration.GetValue<int>("HlsCache:MaxSize", 100);
             var maxAgeMinutes = configuration.GetValue<int>("HlsCache:MaxAgeMinutes", 60);
-            return new HlsCacheStorage(logger, maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
+            return new HlsCacheStorage(logger, configuration, maxSize, TimeSpan.FromMinutes(maxAgeMinutes));
         });
         services.AddSingleton<HlsService>();
         services.AddSingleton<IPlaybackPlugin, HlsPlaybackPlugin>();
