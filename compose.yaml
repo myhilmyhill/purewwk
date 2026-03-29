@@ -10,7 +10,7 @@ services:
       - ./Music:/app/Music
       - music_index_vol:/app/music_index
       - hls_segments_vol:/app/hls_segments
-      - ./FluidR3_GM.sf2:/usr/share/sounds/sf2/FluidR3_GM.sf2
+      # - ./FluidR3_GM.sf2:/usr/share/sounds/sf2/FluidR3_GM.sf2
 
 volumes:
   music_index_vol:
