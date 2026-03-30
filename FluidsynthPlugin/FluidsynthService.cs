@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -92,15 +93,16 @@ public class FluidsynthService
                 }
 
                 var bitRate = bitRates.Length > 0 ? bitRates[0] : 128;
-                
-                // Fluidsynth to FFmpeg pipe
-                // -ni: No MIDI input, No shell
-                // -T raw: Raw PCM output
-                // -F -: Output to stdout
-                var fluidsynthArgs = $"-ni -T raw -F - \"{soundFontPath}\" \"{midiPath}\"";
-                var ffmpegArgs = $"-y -v error -f s16le -ar 44100 -ac 2 -i - -vn -af \"apad=pad_dur=2\" -c:a aac -b:a {bitRate}k -f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
 
-                _logger.LogInformation("Starting MIDI rendering for {Id} using SoundFont {Sf}", id, soundFontPath);
+                // Calculate MIDI duration to prevent infinite loops
+                double duration = GetMidiDuration(midiPath);
+                var limitSeconds = duration > 0 ? duration + 5.0 : 600.0; // Limit to duration + 5s buffer, or 10 min fallback
+
+                // Fluidsynth to FFmpeg pipe
+                var fluidsynthArgs = $"-ni -q -r 44100 -T raw -O s16 -F - \"{soundFontPath}\" \"{midiPath}\"";
+                var ffmpegArgs = $"-y -v error -f s16le -ar 44100 -ac 2 -i - -vn -t {limitSeconds:F2} -c:a aac -b:a {bitRate}k -f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+
+                _logger.LogInformation("Starting MIDI rendering for {Id} ({Duration:F1}s) using SoundFont {Sf}", id, duration, soundFontPath);
 
                 var cts = new CancellationTokenSource();
                 RegisterActiveProcess(id, cts, variantKey);
@@ -211,6 +213,76 @@ public class FluidsynthService
             if (!fluidsynth.HasExited) { _logger.LogInformation("Killing stuck Fluidsynth..."); fluidsynth.Kill(); }
             if (!ffmpeg.HasExited) { _logger.LogInformation("Killing stuck FFmpeg..."); ffmpeg.Kill(); }
         }
+    }
+
+    private double GetMidiDuration(string filePath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            using var reader = new BinaryReader(stream);
+
+            if (reader.ReadUInt32() != 0x6468544D) return 0; // 'MThd' check
+
+            reader.ReadUInt32(); // Length (6)
+            reader.ReadUInt16(); // Format
+            var trackCount = BinaryPrimitives.ReadUInt16BigEndian(reader.ReadBytes(2));
+            var division = BinaryPrimitives.ReadUInt16BigEndian(reader.ReadBytes(2));
+
+            if ((division & 0x8000) != 0) return 0; // SMPTE not supported here
+
+            double maxSeconds = 0;
+
+            for (int i = 0; i < trackCount; i++)
+            {
+                if (reader.ReadUInt32() != 0x6B72544D) break; // 'MTrk' check
+                var trackLength = BinaryPrimitives.ReadUInt32BigEndian(reader.ReadBytes(4));
+                long trackEndTime = stream.Position + trackLength;
+
+                uint currentTempo = 500000;
+                double currentSeconds = 0;
+
+                while (stream.Position < trackEndTime)
+                {
+                    uint deltaTime = 0;
+                    byte b;
+                    do { b = reader.ReadByte(); deltaTime = (deltaTime << 7) | (uint)(b & 0x7F); } while ((b & 0x80) != 0);
+
+                    currentSeconds += (double)deltaTime * currentTempo / (division * 1000000.0);
+
+                    byte status = reader.ReadByte();
+                    if (status == 0xFF) // Meta event
+                    {
+                        byte type = reader.ReadByte();
+                        uint len = 0;
+                        do { b = reader.ReadByte(); len = (len << 7) | (uint)(b & 0x7F); } while ((b & 0x80) != 0);
+
+                        if (type == 0x51 && len == 3) // Set Tempo
+                        {
+                            var data = reader.ReadBytes(3);
+                            currentTempo = (uint)((data[0] << 16) | (data[1] << 8) | data[2]);
+                        }
+                        else stream.Position += len;
+                    }
+                    else if (status >= 0xF0) // SysEx
+                    {
+                        uint len = 0;
+                        do { b = reader.ReadByte(); len = (len << 7) | (uint)(b & 0x7F); } while ((b & 0x80) != 0);
+                        stream.Position += len;
+                    }
+                    else
+                    {
+                        // Voice events
+                        int skip = (status & 0xF0) switch { 0xC0 or 0xD0 => 1, _ => 2 };
+                        if ((status & 0x80) == 0) skip--; // Running status
+                        stream.Position += skip;
+                    }
+                }
+                if (currentSeconds > maxSeconds) maxSeconds = currentSeconds;
+            }
+            return maxSeconds;
+        }
+        catch { return 0; }
     }
 
     private async Task WaitForFirstSegment(string id, string cacheDir, string playlistPath)
