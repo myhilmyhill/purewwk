@@ -275,7 +275,7 @@ public class HlsService
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
-                     _logger.LogTrace("FFmpeg Output: {Data}", e.Data);
+                    _logger.LogTrace("FFmpeg Output: {Data}", e.Data);
                 }
             };
             
@@ -284,7 +284,7 @@ public class HlsService
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
-                    _logger.LogTrace("FFmpeg Error: {Data}", e.Data);
+                    _logger.LogTrace("FFmpeg Output: {Data}", e.Data);
                     lock(errorBuilder)
                     {
                         if (errorBuilder.Length < 4096) // Limit logging size

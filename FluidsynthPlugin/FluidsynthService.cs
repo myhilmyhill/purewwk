@@ -98,7 +98,7 @@ public class FluidsynthService
                 // -T raw: Raw PCM output
                 // -F -: Output to stdout
                 var fluidsynthArgs = $"-ni -T raw -F - \"{soundFontPath}\" \"{midiPath}\"";
-                var ffmpegArgs = $"-y -f s16le -ar 44100 -ac 2 -i - -vn -c:a aac -b:a {bitRate}k -f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
+                var ffmpegArgs = $"-y -v error -f s16le -ar 44100 -ac 2 -i - -vn -af \"apad=pad_dur=2\" -c:a aac -b:a {bitRate}k -f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
 
                 _logger.LogInformation("Starting MIDI rendering for {Id} using SoundFont {Sf}", id, soundFontPath);
 
@@ -182,14 +182,14 @@ public class FluidsynthService
             while (!fluidsynth.StandardError.EndOfStream)
             {
                 var line = await fluidsynth.StandardError.ReadLineAsync();
-                if (line != null) _logger.LogInformation("Fluidsynth Error: {Msg}", line);
+                if (line != null) _logger.LogInformation("Fluidsynth Output: {Msg}", line);
             }
         });
         _ = Task.Run(async () => {
             while (!ffmpeg.StandardError.EndOfStream)
             {
                 var line = await ffmpeg.StandardError.ReadLineAsync();
-                if (line != null) _logger.LogInformation("FFmpeg Error: {Msg}", line);
+                if (line != null) _logger.LogInformation("FFmpeg Output: {Msg}", line);
             }
         });
 
