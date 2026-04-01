@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -98,12 +99,6 @@ public class FluidsynthService
                 double duration = GetMidiDuration(midiPath);
                 var limitSeconds = duration > 0 ? duration + 5.0 : 600.0; // Limit to duration + 5s buffer, or 10 min fallback
 
-                // Fluidsynth to FFmpeg pipe
-                var fluidsynthArgs = $"-ni -q -r 44100 -T raw -O s16 -F - \"{soundFontPath}\" \"{midiPath}\"";
-                var ffmpegArgs = $"-y -v error -f s16le -ar 44100 -ac 2 -i - -vn -t {limitSeconds:F2} -c:a aac -b:a {bitRate}k -f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\" \"{playlistPath}\"";
-
-                _logger.LogInformation("Starting MIDI rendering for {Id} ({Duration:F1}s) using SoundFont {Sf}", id, duration, soundFontPath);
-
                 var cts = new CancellationTokenSource();
                 RegisterActiveProcess(id, cts, variantKey);
                 
@@ -111,7 +106,9 @@ public class FluidsynthService
                 {
                     try
                     {
-                        await RunPipedCommand(fluidsynthArgs, ffmpegArgs, cts.Token);
+                        _logger.LogInformation("Starting MIDI rendering for {Id} ({Duration:F1}s) using SoundFont {Sf}", id, duration, soundFontPath);
+
+                        await RunPipedCommand(soundFontPath, midiPath, playlistPath, cacheDir, bitRate, limitSeconds, cts.Token);
                         _logger.LogInformation("MIDI rendering completed for {Id}", id);
                     }
                     catch (Exception ex)
@@ -134,27 +131,73 @@ public class FluidsynthService
         return playlistContent;
     }
 
-    private async Task RunPipedCommand(string fluidsynthArgs, string ffmpegArgs, CancellationToken cancellationToken)
+    private async Task RunPipedCommand(string soundFontPath, string midiPath, string playlistPath, string cacheDir, int bitRate, double limitSeconds, CancellationToken cancellationToken)
     {
         var fluidsynthInfo = new ProcessStartInfo
         {
             FileName = "fluidsynth",
-            Arguments = fluidsynthArgs,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        // Use ArgumentList for safety
+        fluidsynthInfo.ArgumentList.Add("-ni");
+        fluidsynthInfo.ArgumentList.Add("-q");
+        fluidsynthInfo.ArgumentList.Add("-a");
+        fluidsynthInfo.ArgumentList.Add("file");
+        fluidsynthInfo.ArgumentList.Add("-r");
+        fluidsynthInfo.ArgumentList.Add("44100");
+        fluidsynthInfo.ArgumentList.Add("-T");
+        fluidsynthInfo.ArgumentList.Add("raw");
+        fluidsynthInfo.ArgumentList.Add("-O");
+        fluidsynthInfo.ArgumentList.Add("s16");
+        fluidsynthInfo.ArgumentList.Add("-F");
+        fluidsynthInfo.ArgumentList.Add("-");
+        fluidsynthInfo.ArgumentList.Add(soundFontPath);
+        fluidsynthInfo.ArgumentList.Add(midiPath);
 
         var ffmpegInfo = new ProcessStartInfo
         {
             FileName = "ffmpeg",
-            Arguments = ffmpegArgs,
             RedirectStandardInput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        ffmpegInfo.ArgumentList.Add("-y");
+        ffmpegInfo.ArgumentList.Add("-v");
+        ffmpegInfo.ArgumentList.Add("info"); // Changed from error to info for more info
+        ffmpegInfo.ArgumentList.Add("-f");
+        ffmpegInfo.ArgumentList.Add("s16le");
+        ffmpegInfo.ArgumentList.Add("-ar");
+        ffmpegInfo.ArgumentList.Add("44100");
+        ffmpegInfo.ArgumentList.Add("-ac");
+        ffmpegInfo.ArgumentList.Add("2");
+        ffmpegInfo.ArgumentList.Add("-i");
+        ffmpegInfo.ArgumentList.Add("-");
+        ffmpegInfo.ArgumentList.Add("-vn");
+        ffmpegInfo.ArgumentList.Add("-t");
+        ffmpegInfo.ArgumentList.Add(limitSeconds.ToString("F2", CultureInfo.InvariantCulture));
+        ffmpegInfo.ArgumentList.Add("-c:a");
+        ffmpegInfo.ArgumentList.Add("aac");
+        ffmpegInfo.ArgumentList.Add("-b:a");
+        ffmpegInfo.ArgumentList.Add($"{bitRate}k");
+        ffmpegInfo.ArgumentList.Add("-f");
+        ffmpegInfo.ArgumentList.Add("hls");
+        ffmpegInfo.ArgumentList.Add("-hls_time");
+        ffmpegInfo.ArgumentList.Add("3");
+        ffmpegInfo.ArgumentList.Add("-hls_list_size");
+        ffmpegInfo.ArgumentList.Add("0");
+        ffmpegInfo.ArgumentList.Add("-start_number");
+        ffmpegInfo.ArgumentList.Add("0");
+        ffmpegInfo.ArgumentList.Add("-hls_segment_filename");
+        ffmpegInfo.ArgumentList.Add($"{cacheDir}/segment_%03d.ts");
+        ffmpegInfo.ArgumentList.Add(playlistPath);
+
+        _logger.LogInformation("Executing MIDI pipe: {F} -> {G}", 
+            string.Join(" ", fluidsynthInfo.ArgumentList.Select(a => a.Contains(" ") ? $"\"{a}\"" : a)),
+            string.Join(" ", ffmpegInfo.ArgumentList.Select(a => a.Contains(" ") ? $"\"{a}\"" : a)));
 
         using var fluidsynth = Process.Start(fluidsynthInfo);
         using var ffmpeg = Process.Start(ffmpegInfo);
@@ -162,7 +205,7 @@ public class FluidsynthService
         if (fluidsynth == null || ffmpeg == null) throw new Exception("Failed to start rendering processes");
 
         // Forward fluidsynth output to ffmpeg input
-        _ = Task.Run(async () =>
+        var pipeTask = Task.Run(async () =>
         {
             try
             {
@@ -171,23 +214,24 @@ public class FluidsynthService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error piping Fluidsynth to FFmpeg");
+                if (!cancellationToken.IsCancellationRequested)
+                    _logger.LogWarning(ex, "Error piping Fluidsynth to FFmpeg (this may be normal if process exited)");
             }
             finally
             {
-                ffmpeg.StandardInput.Close();
+                try { ffmpeg.StandardInput.Close(); } catch { }
             }
         });
         
         // Log errors from both processes
-        _ = Task.Run(async () => {
+        var fluidsythLogTask = Task.Run(async () => {
             while (!fluidsynth.StandardError.EndOfStream)
             {
                 var line = await fluidsynth.StandardError.ReadLineAsync();
                 if (line != null) _logger.LogInformation("Fluidsynth Output: {Msg}", line);
             }
         });
-        _ = Task.Run(async () => {
+        var ffmpegLogTask = Task.Run(async () => {
             while (!ffmpeg.StandardError.EndOfStream)
             {
                 var line = await ffmpeg.StandardError.ReadLineAsync();
@@ -202,7 +246,7 @@ public class FluidsynthService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("MIDI rendering cancelled");
+            _logger.LogInformation("MIDI rendering cancelled for Task.WhenAll");
         }
         catch (Exception ex)
         {
@@ -210,8 +254,11 @@ public class FluidsynthService
         }
         finally
         {
-            if (!fluidsynth.HasExited) { _logger.LogInformation("Killing stuck Fluidsynth..."); fluidsynth.Kill(); }
-            if (!ffmpeg.HasExited) { _logger.LogInformation("Killing stuck FFmpeg..."); ffmpeg.Kill(); }
+            if (!fluidsynth.HasExited) { _logger.LogInformation("Killing stuck Fluidsynth..."); try { fluidsynth.Kill(); } catch { } }
+            if (!ffmpeg.HasExited) { _logger.LogInformation("Killing stuck FFmpeg..."); try { ffmpeg.Kill(); } catch { } }
+            
+            // Ensure background tasks finish
+            await Task.WhenAny(pipeTask, Task.Delay(1000));
         }
     }
 
@@ -288,7 +335,7 @@ public class FluidsynthService
     private async Task WaitForFirstSegment(string id, string cacheDir, string playlistPath)
     {
         _logger.LogInformation("Waiting for first segment in {Path}", playlistPath);
-        var timeout = TimeSpan.FromSeconds(30);
+        var timeout = TimeSpan.FromSeconds(60); // Increased from 30s
         var startTime = DateTime.Now;
 
         while (DateTime.Now - startTime < timeout)
@@ -337,10 +384,20 @@ public class FluidsynthService
                 throw new Exception("Rendering process failed or exited early");
             }
 
-            await Task.Delay(500);
+            await Task.Delay(1000); // Increased delay
         }
         
-        _logger.LogError("Timeout waiting for MIDI rendering for {Id}. Playlist exists: {Exists}", id, File.Exists(playlistPath));
+        // Timeout happened - collect more diagnostics
+        bool dirExists = Directory.Exists(cacheDir);
+        string fileList = "none";
+        if (dirExists)
+        {
+            var files = Directory.GetFiles(cacheDir);
+            fileList = string.Join(", ", files.Select(Path.GetFileName));
+        }
+
+        _logger.LogError("Timeout waiting for MIDI rendering for {Id}. Playlist exists: {Exists}, CacheDir exists: {DirExists}, Files in CacheDir: {Files}", 
+            id, File.Exists(playlistPath), dirExists, fileList);
         throw new Exception("Timeout waiting for MIDI rendering");
     }
 
