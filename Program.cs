@@ -70,3 +70,5 @@ app.MapControllers();
 app.MapGet("/", () => Results.Ok());
 
 app.Run();
+
+public partial class Program { }
