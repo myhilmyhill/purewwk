@@ -269,36 +269,44 @@ public class FluidsynthService
             using var stream = File.OpenRead(filePath);
             using var reader = new BinaryReader(stream);
 
-            if (reader.ReadUInt32() != 0x6468544D) return 0; // 'MThd' check
+            if (BinaryPrimitives.ReadUInt32BigEndian(reader.ReadBytes(4)) != 0x4D546864) return 0; // 'MThd'
 
-            reader.ReadUInt32(); // Length (6)
-            reader.ReadUInt16(); // Format
+            reader.ReadUInt32(); // Header length (6)
+            var format = BinaryPrimitives.ReadUInt16BigEndian(reader.ReadBytes(2));
             var trackCount = BinaryPrimitives.ReadUInt16BigEndian(reader.ReadBytes(2));
             var division = BinaryPrimitives.ReadUInt16BigEndian(reader.ReadBytes(2));
 
-            if ((division & 0x8000) != 0) return 0; // SMPTE not supported here
+            if ((division & 0x8000) != 0) return 0; // SMPTE not supported
 
-            double maxSeconds = 0;
+            // Tempo Map: Absolute Tick -> Tempo (microseconds per quarter note)
+            var tempoMap = new SortedDictionary<long, uint> { { 0, 500000 } }; // Default 120 BPM
+            long maxTicks = 0;
 
             for (int i = 0; i < trackCount; i++)
             {
-                if (reader.ReadUInt32() != 0x6B72544D) break; // 'MTrk' check
+                if (BinaryPrimitives.ReadUInt32BigEndian(reader.ReadBytes(4)) != 0x4D54726B) break; // 'MTrk'
                 var trackLength = BinaryPrimitives.ReadUInt32BigEndian(reader.ReadBytes(4));
                 long trackEndTime = stream.Position + trackLength;
-
-                uint currentTempo = 500000;
-                double currentSeconds = 0;
+                long currentTicks = 0;
+                byte lastStatus = 0;
 
                 while (stream.Position < trackEndTime)
                 {
+                    // Read Delta Time
                     uint deltaTime = 0;
                     byte b;
                     do { b = reader.ReadByte(); deltaTime = (deltaTime << 7) | (uint)(b & 0x7F); } while ((b & 0x80) != 0);
-
-                    currentSeconds += (double)deltaTime * currentTempo / (division * 1000000.0);
+                    currentTicks += deltaTime;
 
                     byte status = reader.ReadByte();
-                    if (status == 0xFF) // Meta event
+                    if (status < 0x80)
+                    {
+                        // Running Status
+                        status = lastStatus;
+                        stream.Position--; // Reread this byte as data
+                    }
+
+                    if (status == 0xFF) // Meta Event
                     {
                         byte type = reader.ReadByte();
                         uint len = 0;
@@ -307,29 +315,61 @@ public class FluidsynthService
                         if (type == 0x51 && len == 3) // Set Tempo
                         {
                             var data = reader.ReadBytes(3);
-                            currentTempo = (uint)((data[0] << 16) | (data[1] << 8) | data[2]);
+                            uint tempo = (uint)((data[0] << 16) | (data[1] << 8) | data[2]);
+                            tempoMap[currentTicks] = tempo;
                         }
                         else stream.Position += len;
+                        lastStatus = 0; // Meta events reset running status
                     }
                     else if (status >= 0xF0) // SysEx
                     {
                         uint len = 0;
                         do { b = reader.ReadByte(); len = (len << 7) | (uint)(b & 0x7F); } while ((b & 0x80) != 0);
                         stream.Position += len;
+                        lastStatus = 0;
                     }
                     else
                     {
-                        // Voice events
-                        int skip = (status & 0xF0) switch { 0xC0 or 0xD0 => 1, _ => 2 };
-                        if ((status & 0x80) == 0) skip--; // Running status
+                        // Voice Event
+                        lastStatus = status;
+                        // Important: Only update maxTicks for voice events (music)
+                        // This avoids trailing silent space often added by MIDI editors
+                        if (currentTicks > maxTicks) maxTicks = currentTicks;
+
+                        int skip = (status & 0xF0) switch
+                        {
+                            0xC0 or 0xD0 => 1,
+                            _ => 2
+                        };
                         stream.Position += skip;
                     }
                 }
-                if (currentSeconds > maxSeconds) maxSeconds = currentSeconds;
             }
-            return maxSeconds;
+
+            // Convert max ticks to seconds using the tempo map
+            double durationSeconds = 0;
+            long lastTicks = 0;
+            uint currentTempo = 500000;
+
+            foreach (var entry in tempoMap)
+            {
+                if (entry.Key >= maxTicks) break;
+                durationSeconds += (double)(entry.Key - lastTicks) * currentTempo / (division * 1000000.0);
+                lastTicks = entry.Key;
+                currentTempo = entry.Value;
+            }
+            durationSeconds += (double)(maxTicks - lastTicks) * currentTempo / (division * 1000000.0);
+
+            // Add a small buffer (e.g., 2s) to allow for sound tails
+            if (durationSeconds > 0) durationSeconds += 2.0;
+
+            return durationSeconds;
         }
-        catch { return 0; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Error calculating MIDI duration: {Msg}", ex.Message);
+            return 0;
+        }
     }
 
     private async Task WaitForFirstSegment(string id, string cacheDir, string playlistPath)

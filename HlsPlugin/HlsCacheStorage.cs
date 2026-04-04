@@ -186,13 +186,6 @@ public class HlsCacheStorage : IHlsCacheStorage
 
             foreach (var dir in allDirs)
             {
-                if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
-                {
-                    // 空のディレクトリは即削除
-                    try { Directory.Delete(dir); } catch { }
-                    continue;
-                }
-
                 var playlistPath = Path.Combine(dir, "playlist.m3u8");
                 if (!File.Exists(playlistPath))
                 {
