@@ -6,7 +6,7 @@ WORKDIR /source
 
 # Copy project files and restore as distinct layers
 COPY --link *.sln .
-COPY --link repos.csproj .
+COPY --link Purewwk/Purewwk.csproj ./Purewwk/
 COPY --link PluginBase/*.csproj ./PluginBase/
 COPY --link HlsPlugin/*.csproj ./HlsPlugin/
 COPY --link FluidsynthPlugin/*.csproj ./FluidsynthPlugin/
@@ -16,7 +16,7 @@ RUN dotnet restore purewwk.sln -a $TARGETARCH
 COPY --link . .
 
 # Publish main app
-RUN dotnet publish repos.csproj -a $TARGETARCH --no-restore -o /app
+RUN dotnet publish Purewwk/Purewwk.csproj -a $TARGETARCH --no-restore -o /app
 
 # Publish PluginBase (though usually included with repos)
 # Publish HlsPlugin to /app/plugins/
@@ -51,4 +51,4 @@ exec gosu $APP_UID "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 # Define volumes for persistent data
 VOLUME ["/app/music_index", "/app/hls_segments"]
 
-ENTRYPOINT ["/entrypoint.sh", "./repos"]
+ENTRYPOINT ["/entrypoint.sh", "./Purewwk"]

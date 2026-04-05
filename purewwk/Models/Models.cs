@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace repos.Models;
+namespace Purewwk.Models;
 
 public class SubsonicResponse
 {

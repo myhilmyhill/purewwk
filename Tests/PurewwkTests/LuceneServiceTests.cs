@@ -7,7 +7,7 @@ using Lucene.Net.Store;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using repos.Services;
+using Purewwk.Services;
 using Xunit;
 using Xunit.Abstractions;
 

@@ -1,9 +1,9 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "repos", "repos.csproj", "{BA7570B3-2713-4C2A-8722-2FA116993033}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Purewwk", "Purewwk\Purewwk.csproj", "{BA7570B3-2713-4C2A-8722-2FA116993033}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PluginBase", "PluginBase\PluginBase.csproj", "{8692AF4D-64CD-4D93-B093-69EBF1F7816D}"
 EndProject

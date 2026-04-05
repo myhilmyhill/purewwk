@@ -13,13 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Tests\**" />
-    <Compile Remove="PluginBase\**" />
-    <Compile Remove="HlsPlugin\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="PluginBase\PluginBase.csproj" />
+    <ProjectReference Include="..\PluginBase\PluginBase.csproj" />
   </ItemGroup>
 
 </Project>

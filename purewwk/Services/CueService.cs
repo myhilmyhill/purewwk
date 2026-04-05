@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
-namespace repos.Services;
+namespace Purewwk.Services;
 
 public class CueService(ILogger<CueService> _logger, IFileSystem _fileSystem)
 {

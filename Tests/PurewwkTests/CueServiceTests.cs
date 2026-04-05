@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
-using repos.Services;
+using Purewwk.Services;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,7 +22,7 @@ public class CueServiceTests
         _cueService = new CueService(NullLogger<CueService>.Instance, new RealFileSystem());
         
         // Using the absolute path as in the environment
-        _musicDir = @"c:\Users\ebyck\source\repos\purewwk-1\Music";
+        _musicDir = @"c:\Users\ebyck\source\repos\Purewwk-1\Music";
     }
 
     [Fact]

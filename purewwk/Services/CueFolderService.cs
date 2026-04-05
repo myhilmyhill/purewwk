@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.Extensions.Logging;
 
-namespace repos.Services;
+namespace Purewwk.Services;
 
 public class CueFolderService(
     ILogger<CueFolderService> _logger,

@@ -4,9 +4,9 @@ using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using PureWwk.Plugin.Abstractions;
+using Purewwk.Plugin.Abstractions;
 
-namespace PureWwk.Plugins.Fluidsynth;
+namespace Purewwk.Plugins.Fluidsynth;
 
 public class FluidsynthService
 {

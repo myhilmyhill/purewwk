@@ -5,8 +5,8 @@ services:
     ports:
       - 8080:8080
     volumes:
-      - ./appsettings.Development.json:/app/appsettings.Development.json
-      - ./appsettings.json:/app/appsettings.json
+      - ./purewwk/appsettings.Development.json:/app/appsettings.Development.json
+      - ./purewwk/appsettings.json:/app/appsettings.json
       - ./Music:/app/Music
       - music_index_vol:/app/music_index
       - hls_segments_vol:/app/hls_segments

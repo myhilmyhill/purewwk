@@ -23,10 +23,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\Services\CueService.cs" Link="Services\CueService.cs" />
-    <Compile Include="..\..\Services\CueFolderService.cs" Link="Services\CueFolderService.cs" />
-    <Compile Include="..\..\Services\LuceneService.cs" Link="Services\LuceneService.cs" />
-    <Compile Include="..\..\Services\FileSystem.cs" Link="Services\FileSystem.cs" />
+    <Compile Include="..\..\Purewwk\Services\CueService.cs" Link="Services\CueService.cs" />
+    <Compile Include="..\..\Purewwk\Services\CueFolderService.cs" Link="Services\CueFolderService.cs" />
+    <Compile Include="..\..\Purewwk\Services\LuceneService.cs" Link="Services\LuceneService.cs" />
+    <Compile Include="..\..\Purewwk\Services\FileSystem.cs" Link="Services\FileSystem.cs" />
   </ItemGroup>
 
 </Project>

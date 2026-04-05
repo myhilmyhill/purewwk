@@ -3,10 +3,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
-using repos.Models;
-using repos.Services;
+using Purewwk.Models;
+using Purewwk.Services;
 
-namespace repos.Controllers;
+namespace Purewwk.Controllers;
 
 [ApiController]
 [Route("rest")]
@@ -92,7 +92,7 @@ public class MusicController : ControllerBase
                 return BadRequest($"No plugin found for extension {extension}");
             }
 
-            var metadata = new PureWwk.Plugin.Abstractions.MediaFileMetadata
+            var metadata = new Purewwk.Plugin.Abstractions.MediaFileMetadata
             {
                 Id = id,
                 Path = fileDoc["path"],
@@ -184,7 +184,7 @@ public class MusicController : ControllerBase
 
             if (string.IsNullOrWhiteSpace(key)) return NotFound();
 
-            // 正規化 & ディレクトリ逸脱防止
+            // 正規化 & チE��レクトリ逸脱防止
             var fullBase = Path.GetFullPath(hlsSegmentsDir);
             var fullPath = Path.GetFullPath($"{hlsSegmentsDir}{key}");
             if (!fullPath.StartsWith(fullBase, StringComparison.OrdinalIgnoreCase))

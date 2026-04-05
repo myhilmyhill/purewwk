@@ -1,7 +1,7 @@
 using System.Reflection;
-using PureWwk.Plugin.Abstractions;
+using Purewwk.Plugin.Abstractions;
 
-namespace repos.Services;
+namespace Purewwk.Services;
 
 public class PluginManager
 {
