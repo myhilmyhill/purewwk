@@ -176,6 +176,8 @@ public class FluidsynthService
         ffmpegInfo.ArgumentList.Add("2");
         ffmpegInfo.ArgumentList.Add("-i");
         ffmpegInfo.ArgumentList.Add("-");
+        ffmpegInfo.ArgumentList.Add("-af");
+        ffmpegInfo.ArgumentList.Add("loudnorm");
         ffmpegInfo.ArgumentList.Add("-vn");
         ffmpegInfo.ArgumentList.Add("-t");
         ffmpegInfo.ArgumentList.Add(limitSeconds.ToString("F2", CultureInfo.InvariantCulture));
