@@ -25,10 +25,9 @@ public class LuceneServiceTests : IDisposable
     public LuceneServiceTests(ITestOutputHelper output)
     {
         _output = output;
-        
-        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         _fileSystem = new MemoryFileSystem();
+
         _fileSystem.AddDirectory(_musicRoot);
 
         _configMock = new Mock<IConfiguration>();

@@ -20,10 +20,9 @@ PluginManager.LoadPlugins(builder.Services, builder.Configuration);
 builder.Services.AddSingleton<PluginManager>();
 
 
-// Support Shift_JIS and other encodings
-System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
 var musicDir = builder.Configuration["MusicDirectory"];
+
 if (string.IsNullOrEmpty(musicDir))
 {
     throw new InvalidOperationException("MusicDirectory is not configured.");
