@@ -1,8 +1,8 @@
-using Purewwk.Plugin.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Purewwk.Services;
+using Purewwk.Plugin;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,7 +18,7 @@ builder.Services.AddHttpLogging(logging =>
 
 builder.Services.AddSingleton<IFileSystem, RealFileSystem>();
 builder.Services.AddSingleton<ILuceneService, LuceneService>();
-
+builder.Services.AddSingleton<IIndexUpdater>(sp => sp.GetRequiredService<ILuceneService>());
 PluginManager.LoadPlugins(builder.Services, builder.Configuration);
 builder.Services.AddSingleton<PluginManager>();
 
@@ -44,17 +44,8 @@ _ = Task.Run(() =>
     }
 });
 
-
-
-
 app.UseHttpLogging();
-
 app.UseDefaultFiles();
 app.UseStaticFiles();
-
 app.MapControllers();
-
 app.Run();
-
-
-

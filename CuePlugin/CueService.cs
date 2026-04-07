@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Plugins.Cue;
 

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
-namespace Purewwk.Plugin.Abstractions;
+namespace Purewwk.Plugin;
 
 /// <summary>
 /// Unified base model representing a media entity.

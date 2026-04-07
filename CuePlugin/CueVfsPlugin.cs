@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Plugins.Cue;
 

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Plugins.Cue;
 

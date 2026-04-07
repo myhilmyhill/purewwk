@@ -4,26 +4,18 @@ using System.IO;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Plugins.Hls;
 
-public class HlsService
+public class HlsService : HlsServiceBase
 {
-    private readonly ILogger<HlsService> _logger;
-    private readonly IConfiguration _configuration;
-    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IHlsCacheStorage _cacheStorage;
     private readonly bool _cacheEnabled;
-    
-    private readonly Dictionary<string, (CancellationTokenSource Cts, string VariantKey, DateTime StartTime)> _activeProcesses = new();
-    private readonly object _processLock = new object();
 
     public HlsService(ILogger<HlsService> logger, IConfiguration configuration, IHttpContextAccessor httpContextAccessor, IHlsCacheStorage cacheStorage)
+        : base(logger, configuration, httpContextAccessor)
     {
-        _logger = logger;
-        _configuration = configuration;
-        _httpContextAccessor = httpContextAccessor;
         _cacheStorage = cacheStorage;
         _cacheEnabled = configuration.GetValue<bool>("HlsCache:Enabled", true);
     }
@@ -53,7 +45,7 @@ public class HlsService
 
         lock (_processLock)
         {
-            if (_activeProcesses.TryGetValue(id, out var active))
+            if (TryGetActiveProcess(id, out var active))
             {
                 if (active.VariantKey == variantKey)
                 {
@@ -63,8 +55,7 @@ public class HlsService
                 else
                 {
                     _logger.LogInformation("Cancelling existing FFmpeg process (variant mismatch) for id: {Id}", id);
-                    active.Cts.Cancel();
-                    _activeProcesses.Remove(id);
+                    CancelAndRemoveActiveProcess(id);
                 }
             }
         }
@@ -155,7 +146,7 @@ public class HlsService
             });
         }
         
-        await WaitForFirstSegment(id, cacheDir, playlistPath);
+        await WaitForFirstSegment(id, cacheDir, playlistPath, minSegments: 2);
         var playlistContent = await File.ReadAllTextAsync(playlistPath);
         return playlistContent.Replace("segment_", $"{segmentBaseUrl}segment_");
     }
@@ -191,15 +182,6 @@ public class HlsService
         return Task.CompletedTask;
     }
 
-    private string GetBaseUrl()
-    {
-        var httpContext = _httpContextAccessor.HttpContext;
-        if (httpContext == null) throw new Exception("HttpContext is null");
-        
-        var request = httpContext.Request;
-        var pathBase = request.PathBase.Value;
-        return $"{pathBase}/hls?key=";
-    }
 
     private async Task RunFfmpegInBackground(string args, string cacheDir, CancellationToken cancellationToken)
     {
@@ -268,62 +250,4 @@ public class HlsService
         }
     }
 
-    private async Task WaitForFirstSegment(string id, string cacheDir, string playlistPath)
-    {
-        const int MinSegments = 2;
-        var timeout = TimeSpan.FromSeconds(30);
-        var startTime = DateTime.Now;
-
-        while (DateTime.Now - startTime < timeout)
-        {
-            if (File.Exists(playlistPath))
-            {
-                try
-                {
-                    var content = await File.ReadAllTextAsync(playlistPath);
-                    var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    var segments = lines.Where(l => l.EndsWith(".ts") && !l.StartsWith("#")).ToList();
-                    var isComplete = lines.Any(l => l.Contains("#EXT-X-ENDLIST"));
-                    
-                    if (segments.Count >= MinSegments || (segments.Count > 0 && isComplete))
-                    {
-                        var segmentPath = Path.Combine(cacheDir, segments.Last());
-                        if (File.Exists(segmentPath) && new FileInfo(segmentPath).Length > 0) return;
-                    }
-
-                    if (segments.Count > 0 && (DateTime.Now - startTime).TotalSeconds > 2.0) return;
-                }
-                catch { }
-            }
-
-            bool active;
-            lock(_processLock) { active = _activeProcesses.ContainsKey(id); }
-            if (!active) throw new Exception("FFmpeg exited early");
-
-            await Task.Delay(200);
-        }
-        throw new Exception("HLS timeout");
-    }
-
-    private void RegisterActiveProcess(string id, CancellationTokenSource cts, string variantKey)
-    {
-        lock (_processLock)
-        {
-            if (_activeProcesses.Count >= 4)
-            {
-                var oldest = _activeProcesses.OrderBy(kvp => kvp.Value.StartTime).First();
-                oldest.Value.Cts.Cancel();
-                _activeProcesses.Remove(oldest.Key);
-            }
-            _activeProcesses[id] = (cts, variantKey, DateTime.Now);
-        }
-    }
-
-    private void UnregisterActiveProcess(string id, CancellationTokenSource cts)
-    {
-        lock (_processLock)
-        {
-            if (_activeProcesses.TryGetValue(id, out var active) && active.Cts == cts) _activeProcesses.Remove(id);
-        }
-    }
 }

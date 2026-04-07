@@ -1,4 +1,5 @@
-namespace Purewwk.Plugin.Abstractions;
+
+namespace Purewwk.Plugin;
 
 public interface IPlugin
 {

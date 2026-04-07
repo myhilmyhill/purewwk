@@ -3,11 +3,11 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Plugins.FileWatcher;
 
-public class FileWatcherService(ILogger<FileWatcherService> _logger, ILuceneService _luceneService, IConfiguration _configuration) : IHostedService, IDisposable
+public class FileWatcherService(ILogger<FileWatcherService> _logger, IIndexUpdater _indexUpdater, IConfiguration _configuration) : IHostedService, IDisposable
 {
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly ConcurrentDictionary<string, DateTime> _pendingChanges = new();
@@ -247,13 +247,13 @@ public class FileWatcherService(ILogger<FileWatcherService> _logger, ILuceneServ
                             if (File.Exists(path) || Directory.Exists(path))
                             {
                                 // File or directory exists - add/update
-                                _luceneService.AddOrUpdatePath(path, musicDirectory);
+                                _indexUpdater.AddOrUpdatePath(path, musicDirectory);
                                 _logger.LogDebug("Updated index for: {Path}", path);
                             }
                             else
                             {
                                 // File or directory deleted - remove from index
-                                _luceneService.RemoveFromIndex(path);
+                                _indexUpdater.RemoveFromIndex(path);
                                 _logger.LogDebug("Removed from index: {Path}", path);
                             }
                         }

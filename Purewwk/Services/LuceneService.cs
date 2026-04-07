@@ -1,3 +1,4 @@
+using Purewwk.Plugin;
 using Lucene.Net.Analysis;
 using Lucene.Net.Analysis.Standard;
 using Lucene.Net.Documents;
@@ -10,7 +11,6 @@ using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Text;
-using Purewwk.Plugin.Abstractions;
 
 namespace Purewwk.Services;
 

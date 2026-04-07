@@ -4,24 +4,15 @@ using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Plugins.Fluidsynth;
 
-public class FluidsynthService
+public class FluidsynthService : HlsServiceBase
 {
-    private readonly ILogger<FluidsynthService> _logger;
-    private readonly IConfiguration _configuration;
-    private readonly IHttpContextAccessor _httpContextAccessor;
-    
-    private readonly Dictionary<string, (CancellationTokenSource Cts, string VariantKey, DateTime StartTime)> _activeProcesses = new();
-    private readonly object _processLock = new object();
-
     public FluidsynthService(ILogger<FluidsynthService> logger, IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
+        : base(logger, configuration, httpContextAccessor)
     {
-        _logger = logger;
-        _configuration = configuration;
-        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<string> GenerateHlsPlaylist(MediaItem item, int[] bitRates)
@@ -44,7 +35,7 @@ public class FluidsynthService
 
         lock (_processLock)
         {
-            if (_activeProcesses.TryGetValue(id, out var active))
+            if (TryGetActiveProcess(id, out var active))
             {
                 if (active.VariantKey == variantKey)
                 {
@@ -52,8 +43,7 @@ public class FluidsynthService
                 }
                 else
                 {
-                    active.Cts.Cancel();
-                    _activeProcesses.Remove(id);
+                    CancelAndRemoveActiveProcess(id);
                 }
             }
         }
@@ -97,7 +87,6 @@ public class FluidsynthService
 
                 // Calculate MIDI duration to prevent infinite loops
                 double duration = GetMidiDuration(midiPath);
-                var limitSeconds = duration > 0 ? duration + 5.0 : 600.0; // Limit to duration + 5s buffer, or 10 min fallback
 
                 var cts = new CancellationTokenSource();
                 RegisterActiveProcess(id, cts, variantKey);
@@ -108,7 +97,7 @@ public class FluidsynthService
                     {
                         _logger.LogInformation("Starting MIDI rendering for {Id} ({Duration:F1}s) using SoundFont {Sf}", id, duration, soundFontPath);
 
-                        await RunPipedCommand(soundFontPath, midiPath, playlistPath, cacheDir, bitRate, limitSeconds, cts.Token);
+                        await RunPipedCommand(soundFontPath, midiPath, playlistPath, cacheDir, bitRate, duration, cts.Token);
                         _logger.LogInformation("MIDI rendering completed for {Id}", id);
                     }
                     catch (Exception ex)
@@ -371,95 +360,7 @@ public class FluidsynthService
         }
     }
 
-    private async Task WaitForFirstSegment(string id, string cacheDir, string playlistPath)
-    {
-        _logger.LogInformation("Waiting for first segment in {Path}", playlistPath);
-        var timeout = TimeSpan.FromSeconds(60); // Increased from 30s
-        var startTime = DateTime.Now;
 
-        while (DateTime.Now - startTime < timeout)
-        {
-            if (File.Exists(playlistPath))
-            {
-                try
-                {
-                    var content = await File.ReadAllTextAsync(playlistPath);
-                    if (content.Contains(".ts"))
-                    {
-                        _logger.LogInformation("Found valid playlist for {Id}", id);
-                        return;
-                    }
-                    else
-                    {
-                        _logger.LogTrace("Playlist exists but no segments yet for {Id}", id);
-                    }
-                }
-                catch (IOException ex)
-                {
-                    _logger.LogWarning("Retrying playlist read for {Id}: {Msg}", id, ex.Message);
-                }
-            }
-            else
-            {
-                // Check if the .tmp version exists to confirm FFmpeg is working
-                if (File.Exists(playlistPath + ".tmp"))
-                {
-                    _logger.LogTrace("Found .tmp playlist for {Id}, waiting for rename", id);
-                }
-            }
-
-            bool active;
-            lock (_processLock) active = _activeProcesses.ContainsKey(id);
-            
-            if (!active)
-            {
-                // Process finished, check one last time
-                if (File.Exists(playlistPath))
-                {
-                    var content = await File.ReadAllTextAsync(playlistPath);
-                    if (content.Contains(".ts")) return;
-                }
-                _logger.LogError("Rendering process for {Id} exited with active=false", id);
-                throw new Exception("Rendering process failed or exited early");
-            }
-
-            await Task.Delay(1000); // Increased delay
-        }
-        
-        // Timeout happened - collect more diagnostics
-        bool dirExists = Directory.Exists(cacheDir);
-        string fileList = "none";
-        if (dirExists)
-        {
-            var files = Directory.GetFiles(cacheDir);
-            fileList = string.Join(", ", files.Select(Path.GetFileName));
-        }
-
-        _logger.LogError("Timeout waiting for MIDI rendering for {Id}. Playlist exists: {Exists}, CacheDir exists: {DirExists}, Files in CacheDir: {Files}", 
-            id, File.Exists(playlistPath), dirExists, fileList);
-        throw new Exception("Timeout waiting for MIDI rendering");
-    }
-
-    private string GetBaseUrl()
-    {
-        var request = _httpContextAccessor.HttpContext?.Request;
-        if (request == null) throw new Exception("HttpContext not available");
-        return $"{request.PathBase}/hls?key=";
-    }
-
-    private void RegisterActiveProcess(string id, CancellationTokenSource cts, string variantKey)
-    {
-        lock (_processLock) _activeProcesses[id] = (cts, variantKey, DateTime.Now);
-    }
-
-    private void UnregisterActiveProcess(string id, CancellationTokenSource cts)
-    {
-        lock (_processLock)
-        {
-            if (_activeProcesses.TryGetValue(id, out var active) && active.Cts == cts)
-                _activeProcesses.Remove(id);
-        }
-    }
 }
 
 

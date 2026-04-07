@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Purewwk.Models;
 using Purewwk.Services;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Controllers;
 
@@ -167,7 +167,6 @@ public class MusicController : ControllerBase
 
             if (string.IsNullOrWhiteSpace(key)) return NotFound();
 
-            // 雎・ｽ｣髫穂ｸ槫密 & 郢昴・縺・ｹ晢ｽｬ郢ｧ・ｯ郢晏現ﾎ憺ｨｾ・ｸ髢ｼ・ｱ鬮ｦ・ｲ雎・ｽ｢
             var fullBase = Path.GetFullPath(hlsSegmentsDir);
             var fullPath = Path.GetFullPath($"{hlsSegmentsDir}{key}");
             if (!fullPath.StartsWith(fullBase, StringComparison.OrdinalIgnoreCase))

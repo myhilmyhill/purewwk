@@ -1,5 +1,5 @@
 using System.Reflection;
-using Purewwk.Plugin.Abstractions;
+using Purewwk.Plugin;
 
 namespace Purewwk.Services;
 

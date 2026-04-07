@@ -1,7 +1,7 @@
 using System.IO;
 using System.Collections.Generic;
 
-namespace Purewwk.Plugin.Abstractions;
+namespace Purewwk.Plugin;
 
 public interface IFileSystem
 {

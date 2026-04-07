@@ -1,11 +1,10 @@
+using Purewwk.Plugin;
 using System.Collections.Generic;
 
-namespace Purewwk.Plugin.Abstractions;
+namespace Purewwk.Services;
 
-public interface ILuceneService
+public interface ILuceneService : IIndexUpdater
 {
-    void AddOrUpdatePath(string fullPath, string musicRootPath);
-    void RemoveFromIndex(string path);
     void IndexDirectory(string dirPath, string? parentId = null);
     MediaItem? GetDocumentById(string id);
     List<MediaItem> GetChildren(string parentId);
