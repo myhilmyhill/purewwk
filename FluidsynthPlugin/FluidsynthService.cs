@@ -362,9 +362,6 @@ public class FluidsynthService
             }
             durationSeconds += (double)(maxTicks - lastTicks) * currentTempo / (division * 1000000.0);
 
-            // Add a small buffer (e.g., 2s) to allow for sound tails
-            if (durationSeconds > 0) durationSeconds += 2.0;
-
             return durationSeconds;
         }
         catch (Exception ex)
