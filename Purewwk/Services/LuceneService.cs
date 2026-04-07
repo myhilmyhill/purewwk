@@ -8,9 +8,10 @@ using Lucene.Net.Util;
 using System.IO;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Text;
+using Microsoft.Extensions.Options;
+using Purewwk.Models;
 
 namespace Purewwk.Services;
 
@@ -26,19 +27,19 @@ public class LuceneService : ILuceneService, IDisposable
     private readonly LuceneVersion _version = LuceneVersion.LUCENE_48;
     private readonly string _indexPath;
 
-    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, IEnumerable<IIndexingPlugin> indexingPlugins, IEnumerable<IPlayablePlugin> playbackPlugins, IFileSystem fileSystem)
-        : this(logger, configuration, indexingPlugins, playbackPlugins, fileSystem, null)
+    public LuceneService(ILogger<LuceneService> logger, IOptions<PurewwkConfig> config, IEnumerable<IIndexingPlugin> indexingPlugins, IEnumerable<IPlayablePlugin> playbackPlugins, IFileSystem fileSystem)
+        : this(logger, config, indexingPlugins, playbackPlugins, fileSystem, null)
     {
     }
 
-    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, IEnumerable<IIndexingPlugin> indexingPlugins, IEnumerable<IPlayablePlugin> playbackPlugins, IFileSystem fileSystem, Lucene.Net.Store.Directory? luceneDirectory = null)
+    public LuceneService(ILogger<LuceneService> logger, IOptions<PurewwkConfig> config, IEnumerable<IIndexingPlugin> indexingPlugins, IEnumerable<IPlayablePlugin> playbackPlugins, IFileSystem fileSystem, Lucene.Net.Store.Directory? luceneDirectory = null)
     {
         _logger = logger;
         _indexingPlugins = indexingPlugins;
         _playbackPlugins = playbackPlugins;
         _fileSystem = fileSystem;
         
-        var workingDir = configuration["WorkingDirectory"];
+        var workingDir = config.Value.WorkingDirectory;
         var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
         var indexPath = Path.Combine(baseDir, "music_index");
         
@@ -54,8 +55,8 @@ public class LuceneService : ILuceneService, IDisposable
         }
 
         _analyzer = new StandardAnalyzer(_version);
-        var config = new IndexWriterConfig(_version, _analyzer);
-        _writer = new IndexWriter(_directory, config);
+        var indexWriterConfig = new IndexWriterConfig(_version, _analyzer);
+        _writer = new IndexWriter(_directory, indexWriterConfig);
     }
     
     public bool IsIndexValid()
@@ -345,7 +346,6 @@ public class LuceneService : ILuceneService, IDisposable
                         new StringField("isDir", "false", Field.Store.YES),
                         new StringField("title", file.Name, Field.Store.YES),
                         new StringField("path", file.FullName, Field.Store.YES),
-                        new StringField("mimeType", player?.GetMimeType(ext) ?? "", Field.Store.YES),
                         new StringField("playerType", player?.GetPlayerType(ext) ?? "", Field.Store.YES)
                     };
                     _writer.AddDocument(doc);
@@ -457,7 +457,6 @@ public class LuceneService : ILuceneService, IDisposable
                                     new StringField("isDir", "false", Field.Store.YES),
                                     new StringField("title", file.Name, Field.Store.YES),
                                     new StringField("path", file.FullName, Field.Store.YES),
-                                    new StringField("mimeType", playbackPlugin?.GetMimeType(ext) ?? "", Field.Store.YES),
                                     new StringField("playerType", playbackPlugin?.GetPlayerType(ext) ?? "", Field.Store.YES)
                                 };
                                 _writer.AddDocument(doc);
@@ -514,7 +513,6 @@ public class LuceneService : ILuceneService, IDisposable
                     var extension = Path.GetExtension(mediaFile.Path).ToLowerInvariant();
                     if (mediaFile.StartTime.HasValue) doc.Add(new DoubleField("startTime", mediaFile.StartTime.Value, Field.Store.YES));
                     if (mediaFile.Duration.HasValue) doc.Add(new DoubleField("duration", mediaFile.Duration.Value, Field.Store.YES));
-                    doc.Add(new StringField("mimeType", mediaFile.Player.GetMimeType(extension), Field.Store.YES));
                     doc.Add(new StringField("playerType", mediaFile.Player.GetPlayerType(extension), Field.Store.YES));
                 }
 

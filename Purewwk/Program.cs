@@ -1,8 +1,7 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Mvc;
+using Purewwk.Models;
 using Purewwk.Services;
 using Purewwk.Plugin;
+using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,27 +18,30 @@ builder.Services.AddHttpLogging(logging =>
 builder.Services.AddSingleton<IFileSystem, RealFileSystem>();
 builder.Services.AddSingleton<ILuceneService, LuceneService>();
 builder.Services.AddSingleton<IIndexUpdater>(sp => sp.GetRequiredService<ILuceneService>());
+
+builder.Services.AddOptions<PurewwkConfig>()
+    .Bind(builder.Configuration)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 PluginManager.LoadPlugins(builder.Services, builder.Configuration);
 builder.Services.AddSingleton<PluginManager>();
 
-var musicDir = builder.Configuration["MusicDirectory"];
-
-if (string.IsNullOrEmpty(musicDir))
-{
-    throw new InvalidOperationException("MusicDirectory is not configured.");
-}
+// var musicDir will be retrieved from Options later if needed, 
+// but we still need it for the initial scan Task.Run below.
 
 var app = builder.Build();
 
 var luceneService = app.Services.GetRequiredService<ILuceneService>();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
+var config = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<PurewwkConfig>>().Value;
 
 _ = Task.Run(() =>
 {
-    if (Directory.Exists(musicDir))
+    if (Directory.Exists(config.MusicDirectory))
     {
         logger.LogInformation("Starting library scan...");
-        luceneService.IndexDirectory(musicDir);
+        luceneService.IndexDirectory(config.MusicDirectory);
         logger.LogInformation("Library scan completed.");
     }
 });

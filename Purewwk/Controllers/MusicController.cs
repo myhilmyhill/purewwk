@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Collections.Generic;
 using System.Linq;
 using Purewwk.Models;
@@ -16,14 +16,14 @@ public class MusicController : ControllerBase
     private readonly ILogger<MusicController> _logger;
     private readonly ILuceneService _luceneService;
     private readonly PluginManager _pluginManager;
-    private readonly IConfiguration _configuration;
+    private readonly IOptions<PurewwkConfig> _config;
 
-    public MusicController(ILogger<MusicController> logger, ILuceneService luceneService, PluginManager pluginManager, IConfiguration configuration)
+    public MusicController(ILogger<MusicController> logger, ILuceneService luceneService, PluginManager pluginManager, IOptions<PurewwkConfig> config)
     {
         _logger = logger;
         _luceneService = luceneService;
         _pluginManager = pluginManager;
-        _configuration = configuration;
+        _config = config;
     }
 
     [HttpGet("getMusicDirectory.view")]
@@ -62,7 +62,7 @@ public class MusicController : ControllerBase
     public IActionResult DebugIndex()
     {
         var docs = new List<Dictionary<string, string>>();
-        using var reader = Lucene.Net.Index.DirectoryReader.Open(Lucene.Net.Store.FSDirectory.Open(Path.Combine(_configuration["WorkingDirectory"] ?? AppContext.BaseDirectory, "music_index")));
+        using var reader = Lucene.Net.Index.DirectoryReader.Open(Lucene.Net.Store.FSDirectory.Open(Path.Combine(_config.Value.WorkingDirectory ?? AppContext.BaseDirectory, "music_index")));
         var searcher = new Lucene.Net.Search.IndexSearcher(reader);
         var query = new Lucene.Net.Search.MatchAllDocsQuery();
         var hits = searcher.Search(query, 1000).ScoreDocs;
@@ -162,7 +162,7 @@ public class MusicController : ControllerBase
         try
         {
             _logger.LogDebug("Looking for HLS segment (hierarchical) - Key: {Key}", key);
-            var workingDir = _configuration["WorkingDirectory"];
+            var workingDir = _config.Value.WorkingDirectory;
             var baseDir = string.IsNullOrEmpty(workingDir) ? AppContext.BaseDirectory : workingDir;
             var hlsSegmentsDir = Path.Combine(baseDir, "hls_segments");
 
