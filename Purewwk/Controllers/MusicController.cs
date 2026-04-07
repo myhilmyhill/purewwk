@@ -106,7 +106,8 @@ public class MusicController : ControllerBase
 
         if (fileDoc is not MediaFile playable) return BadRequest("Item is not playable");
 
-        return Ok(new { playerType = playable.PlayerType });
+        var extension = Path.GetExtension(playable.Path).ToLowerInvariant();
+        return Ok(new { playerType = playable.Player.GetPlayerType(extension) });
     }
 
     [HttpGet("download.view")]

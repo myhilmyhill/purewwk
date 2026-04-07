@@ -499,7 +499,7 @@ public class LuceneService : ILuceneService, IDisposable
                     RegisterSuppressedFile(vFile.Path, filePath);
                 }
 
-                var virtualId = $"{parentId}/{vFile.IdSuffix}";
+                var virtualId = $"{parentId}/{vFile.Id}";
                 var doc = new Document
                 {
                     new StringField("id", virtualId, Field.Store.YES),
@@ -511,10 +511,11 @@ public class LuceneService : ILuceneService, IDisposable
 
                 if (vFile is MediaFile mediaFile)
                 {
+                    var extension = Path.GetExtension(mediaFile.Path).ToLowerInvariant();
                     if (mediaFile.StartTime.HasValue) doc.Add(new DoubleField("startTime", mediaFile.StartTime.Value, Field.Store.YES));
                     if (mediaFile.Duration.HasValue) doc.Add(new DoubleField("duration", mediaFile.Duration.Value, Field.Store.YES));
-                    if (!string.IsNullOrEmpty(mediaFile.MimeType)) doc.Add(new StringField("mimeType", mediaFile.MimeType, Field.Store.YES));
-                    if (!string.IsNullOrEmpty(mediaFile.PlayerType)) doc.Add(new StringField("playerType", mediaFile.PlayerType, Field.Store.YES));
+                    doc.Add(new StringField("mimeType", mediaFile.Player.GetMimeType(extension), Field.Store.YES));
+                    doc.Add(new StringField("playerType", mediaFile.Player.GetPlayerType(extension), Field.Store.YES));
                 }
 
                 _writer.AddDocument(doc);
@@ -555,7 +556,6 @@ public class LuceneService : ILuceneService, IDisposable
         var parent = doc.Get("parent") ?? "";
         var title = doc.Get("title") ?? "";
         var path = doc.Get("path") ?? "";
-        var idSuffix = doc.Get("idSuffix") ?? "";
 
         if (isDir)
         {
@@ -564,8 +564,7 @@ public class LuceneService : ILuceneService, IDisposable
                 Id = id,
                 Parent = parent,
                 Title = title,
-                Path = path,
-                IdSuffix = idSuffix
+                Path = path
             };
         }
 
@@ -586,7 +585,6 @@ public class LuceneService : ILuceneService, IDisposable
             Parent = parent,
             Title = title,
             Path = path,
-            IdSuffix = idSuffix,
             StartTime = doc.GetField("startTime")?.GetDoubleValue(),
             Duration = doc.GetField("duration")?.GetDoubleValue(),
             Player = player ?? throw new Exception($"Playable plugin is missing for {path} (ext: {ext})")

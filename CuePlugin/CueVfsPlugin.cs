@@ -31,9 +31,8 @@ public class CueIndexingPlugin(ICueFolderService _cueFolderService, IEnumerable<
 
                 var entry = new MediaFile
                 {
-                    Id = string.Empty,
+                    Id = track.TrackNumber.ToString("00"),
                     Parent = string.Empty,
-                    IdSuffix = track.TrackNumber.ToString("00"),
                     Title = track.Title,
                     Path = track.SourceAudioPath,
                     StartTime = track.StartTime.TotalSeconds,

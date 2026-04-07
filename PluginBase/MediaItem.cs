@@ -11,7 +11,6 @@ public abstract class MediaItem
 {
     public required string Id { get; init; }
     public required string Parent { get; init; }
-    public string IdSuffix { get; init; } = string.Empty; // Used during indexing
     public required string Title { get; init; }
     public required string Path { get; init; } // Source physical path or plugin-handled URI
     
@@ -35,10 +34,6 @@ public class MediaFolder : MediaItem
         
         public double? StartTime { get; init; }
         public double? Duration { get; init; }
-
-        private string Extension => System.IO.Path.GetExtension(Path).ToLowerInvariant();
-        public string MimeType => Player.GetMimeType(Extension);
-        public string PlayerType => Player.GetPlayerType(Extension);
 
         /// <summary>
         /// The plugin instance responsible for playing this item.
