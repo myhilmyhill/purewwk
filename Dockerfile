@@ -18,15 +18,24 @@ RUN dotnet restore purewwk.sln -a $TARGETARCH
 COPY --link . .
 
 # Publish main app
+FROM build AS publish-main
 RUN dotnet publish Purewwk/Purewwk.csproj -a $TARGETARCH --no-restore -o /app
 
-# Publish PluginBase (though usually included with repos)
-# Publish HlsPlugin to /app/plugins/
+# Publish HlsPlugin
+FROM build AS publish-hls
 RUN dotnet publish HlsPlugin/HlsPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
-RUN dotnet publish FluidsynthPlugin/FluidsynthPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
-RUN dotnet publish CuePlugin/CuePlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
-RUN dotnet publish FileWatcherPlugin/FileWatcherPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
 
+# Publish FluidsynthPlugin
+FROM build AS publish-fluidsynth
+RUN dotnet publish FluidsynthPlugin/FluidsynthPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
+
+# Publish CuePlugin
+FROM build AS publish-cue
+RUN dotnet publish CuePlugin/CuePlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
+
+# Publish FileWatcherPlugin
+FROM build AS publish-filewatcher
+RUN dotnet publish FileWatcherPlugin/FileWatcherPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
@@ -36,7 +45,13 @@ RUN apt-get update && apt-get install -y gosu ffmpeg fluidsynth && rm -rf /var/l
 
 EXPOSE 8080
 WORKDIR /app
-COPY --link --from=build /app .
+
+# Copy published artifacts from each stage
+COPY --link --from=publish-main /app .
+COPY --link --from=publish-hls /app/plugins ./plugins
+COPY --link --from=publish-fluidsynth /app/plugins ./plugins
+COPY --link --from=publish-cue /app/plugins ./plugins
+COPY --link --from=publish-filewatcher /app/plugins ./plugins
 
 # Create entrypoint script to fix volume permissions and initialize
 RUN echo '#!/bin/bash\n\
