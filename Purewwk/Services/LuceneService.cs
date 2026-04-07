@@ -10,34 +10,32 @@ using Microsoft.Extensions.Logging;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Text;
+using Purewwk.Plugin.Abstractions;
 
 namespace Purewwk.Services;
 
-public class LuceneService : IDisposable
+public class LuceneService : ILuceneService, IDisposable
 {
     private readonly ILogger<LuceneService> _logger;
-    private readonly CueService _cueService;
-    private readonly CueFolderService _cueFolderService;
-    private readonly string _indexPath;
+    private readonly IEnumerable<IIndexingPlugin> _indexingPlugins;
+    private readonly IEnumerable<IPlayablePlugin> _playbackPlugins;
     private readonly IFileSystem _fileSystem;
     private readonly Lucene.Net.Store.Directory _directory;
     private readonly Lucene.Net.Analysis.Analyzer _analyzer;
     private readonly IndexWriter _writer;
     private readonly LuceneVersion _version = LuceneVersion.LUCENE_48;
-    private readonly string[] _musicExtensions = [".mp3", ".flac", ".wav", ".ogg", ".mp4", ".m4a", ".aac", ".wma", ".cue", ".mid", ".midi"];
-    // Supported audio extensions for CUE source file detection
-    private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
+    private readonly string _indexPath;
 
-    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, CueService cueService, CueFolderService cueFolderService, IFileSystem fileSystem)
-        : this(logger, configuration, cueService, cueFolderService, fileSystem, null)
+    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, IEnumerable<IIndexingPlugin> indexingPlugins, IEnumerable<IPlayablePlugin> playbackPlugins, IFileSystem fileSystem)
+        : this(logger, configuration, indexingPlugins, playbackPlugins, fileSystem, null)
     {
     }
 
-    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, CueService cueService, CueFolderService cueFolderService, IFileSystem fileSystem, Lucene.Net.Store.Directory? luceneDirectory = null)
+    public LuceneService(ILogger<LuceneService> logger, IConfiguration configuration, IEnumerable<IIndexingPlugin> indexingPlugins, IEnumerable<IPlayablePlugin> playbackPlugins, IFileSystem fileSystem, Lucene.Net.Store.Directory? luceneDirectory = null)
     {
         _logger = logger;
-        _cueService = cueService;
-        _cueFolderService = cueFolderService;
+        _indexingPlugins = indexingPlugins;
+        _playbackPlugins = playbackPlugins;
         _fileSystem = fileSystem;
         
         var workingDir = configuration["WorkingDirectory"];
@@ -58,7 +56,9 @@ public class LuceneService : IDisposable
         _analyzer = new StandardAnalyzer(_version);
         var config = new IndexWriterConfig(_version, _analyzer);
         _writer = new IndexWriter(_directory, config);
-    }    public bool IsIndexValid()
+    }
+    
+    public bool IsIndexValid()
     {
         try
         {
@@ -96,11 +96,9 @@ public class LuceneService : IDisposable
 
     public void RemoveFromIndex(string path)
     {
-        // 繝代せ縺ｫ蝓ｺ縺･縺・※繝峨く繝･繝｡繝ｳ繝医ｒ蜑企勁
         var query = new TermQuery(new Term("path", path));
         _writer.DeleteDocuments(query);
         
-        // 隧ｲ蠖薙ヱ繧ｹ縺ｧ蟋九∪繧句ｭ占ｦ∫ｴ繧ょ炎髯､・医ョ繧｣繝ｬ繧ｯ繝医Μ縺ｮ蝣ｴ蜷茨ｼ・
         if (_fileSystem.DirectoryExists(path))
         {
             var prefixQuery = new PrefixQuery(new Term("path", path + Path.DirectorySeparatorChar));
@@ -114,11 +112,7 @@ public class LuceneService : IDisposable
     private bool IsMusicFile(string filePath)
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        var isMusic = _musicExtensions.Contains(extension);
-        if (!isMusic) {
-             _logger.LogInformation("File rejected by IsMusicFile: {Path}, Ext: {Ext}", filePath, extension);
-        }
-        return isMusic;
+        return _indexingPlugins.Any(p => p.CanHandle(extension)) || _playbackPlugins.Any(p => p.CanHandle(extension));
     }
 
     private bool DirectoryContainsMusicFiles(string dirPath)
@@ -176,7 +170,6 @@ public class LuceneService : IDisposable
                         new StringField("parent", parentId, Field.Store.YES),
                         new StringField("isDir", "true", Field.Store.YES),
                         new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
-                        new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
                         new StringField("path", id, Field.Store.YES)
                     };
                     _writer.AddDocument(doc);
@@ -191,56 +184,40 @@ public class LuceneService : IDisposable
             }
             else if (_fileSystem.FileExists(fullPath) && IsMusicFile(fullPath))
             {
-                var dirPath = Path.GetDirectoryName(fullPath);
-                var shouldIndex = true;
-                if (dirPath != null)
-                {
-                    GetCueSuppressionInfo(dirPath, out var validCues, out var suppressedFiles);
-                    if (fullPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (!validCues.Contains(fullPath)) shouldIndex = false;
-                    }
-                    else
-                    {
-                        if (suppressedFiles.Contains(fullPath)) shouldIndex = false;
-                    }
-                }
-
-                if (shouldIndex)
+                if (!IsFileSuppressed(fullPath))
                 {
                     var parentPath = Path.GetDirectoryName(relativePath);
                     var parentId = string.IsNullOrEmpty(parentPath) ? "/" : "/" + parentPath.Replace('\\', '/');
+                    var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+                    var provider = _indexingPlugins.FirstOrDefault(p => p.CanHandle(ext));
 
-                    if (fullPath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
+                    if (provider != null)
                     {
-                        // CUE file: Index as directory and add tracks
+                        // Index as directory using relevant provider
                         var doc = new Document
                         {
                             new StringField("id", id, Field.Store.YES),
                             new StringField("parent", parentId, Field.Store.YES),
                             new StringField("isDir", "true", Field.Store.YES),
                             new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
-                            new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
                             new StringField("path", fullPath, Field.Store.YES)
                         };
                         _writer.AddDocument(doc);
-                        
-                        // Re-index tracks
-                        IndexCueTracks(fullPath, id);
+                        IndexVirtualTracks(fullPath, id, provider);
                     }
                     else
                     {
                         // Normal music file
+                        var player = _playbackPlugins.FirstOrDefault(p => p.CanHandle(ext));
+                        
                         var doc = new Document
                         {
                             new StringField("id", id, Field.Store.YES),
                             new StringField("parent", parentId, Field.Store.YES),
                             new StringField("isDir", "false", Field.Store.YES),
                             new StringField("title", Path.GetFileName(fullPath), Field.Store.YES),
-                            new StringField("artist", "", Field.Store.YES),
-                            new StringField("coverArt", "", Field.Store.YES),
-                            new StringField("name", Path.GetFileName(fullPath), Field.Store.YES),
-                            new StringField("path", fullPath, Field.Store.YES)
+                            new StringField("path", fullPath, Field.Store.YES),
+                            new StringField("playerType", player?.GetPlayerType(ext) ?? "", Field.Store.YES)
                         };
                         _writer.AddDocument(doc);
                     }
@@ -264,60 +241,41 @@ public class LuceneService : IDisposable
         }
     }
 
-    private void GetCueSuppressionInfo(string dirPath, out HashSet<string> validCues, out HashSet<string> suppressedFiles)
+    private void RegisterSuppressedFile(string suppressedPath, string sourcePath)
     {
-        validCues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        suppressedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var query = new TermQuery(new Term("path", suppressedPath));
+        _writer.DeleteDocuments(query);
+
+        var doc = new Document
+        {
+            new StringField("type", "suppression", Field.Store.YES),
+            new StringField("suppressedPath", suppressedPath, Field.Store.YES),
+            new StringField("sourcePath", sourcePath, Field.Store.YES)
+        };
+        _writer.AddDocument(doc);
+
+        if (_isScanning)
+        {
+            _scanSuppressedPaths.Add(suppressedPath);
+        }
+    }
+
+    private bool IsFileSuppressed(string fullPath)
+    {
+        if (_isScanning && _scanSuppressedPaths.Contains(fullPath)) 
+            return true;
 
         try
         {
-            var dirInfo = _fileSystem.GetDirectoryInfo(dirPath);
-            var cues = dirInfo.GetFiles("*.cue");
-
-            foreach (var cueFile in cues)
-            {
-                try
-                {
-                    var sheet = _cueService.ParseCue(cueFile.FullName);
-                    bool valid = true;
-                    var currentSuppressed = new List<string>();
-
-                    if (sheet.Files.Count == 0) valid = false;
-
-                    foreach (var file in sheet.Files)
-                    {
-                        var audioPath = _cueService.ResolveAudioFile(cueFile.FullName, file.FileName);
-                        if (audioPath != null)
-                        {
-                            currentSuppressed.Add(audioPath);
-                        }
-                    }
-
-                    // If we have files defined but none resolved, consider it invalid (empty/broken CUE)
-                    if (sheet.Files.Count > 0 && currentSuppressed.Count == 0)
-                    {
-                        valid = false;
-                    }
-
-                    if (valid)
-                    {
-                        validCues.Add(cueFile.FullName);
-                        foreach (var s in currentSuppressed) suppressedFiles.Add(s);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("CUE file incomplete (missing source), marking invalid: {Path}", cueFile.FullName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Error checking CUE validity: {Path}", cueFile.FullName);
-                }
-            }
+            using var reader = DirectoryReader.Open(_writer, applyAllDeletes: true);
+            var searcher = new IndexSearcher(reader);
+            var query = new TermQuery(new Term("suppressedPath", fullPath));
+            var hits = searcher.Search(query, 1).ScoreDocs;
+            return hits.Length > 0;
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogError(ex, "Error getting CUE suppression info for: {Path}", dirPath);
+            return false;
         }
     }
 
@@ -338,7 +296,6 @@ public class LuceneService : IDisposable
                     new StringField("parent", currentId, Field.Store.YES),
                     new StringField("isDir", "true", Field.Store.YES),
                     new StringField("title", subDir.Name, Field.Store.YES),
-                    new StringField("name", subDir.Name, Field.Store.YES),
                     new StringField("path", subDirId, Field.Store.YES)
                 };
                 _writer.AddDocument(doc);
@@ -346,56 +303,50 @@ public class LuceneService : IDisposable
             }
         }
         
-        GetCueSuppressionInfo(dirPath, out var validCues, out var suppressedFiles);
-
         foreach (var file in dirInfo.GetFiles())
         {
             // Only index music files
             if (IsMusicFile(file.FullName))
             {
-                if (suppressedFiles.Contains(file.FullName))
+                if (IsFileSuppressed(file.FullName))
                 {
                     _logger.LogDebug("Skipping suppressed file: {Path}", file.FullName);
                     continue;
                 }
 
-                var isCue = file.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase);
-                if (isCue && !validCues.Contains(file.FullName))
-                {
-                    _logger.LogDebug("Skipping invalid CUE: {Path}", file.FullName);
-                    continue;
-                }
+                var ext = file.Extension.ToLowerInvariant();
+                var provider = _indexingPlugins.FirstOrDefault(p => p.CanHandle(ext));
 
                 var relativePath = Path.GetRelativePath(musicRootPath, file.FullName).Replace('\\', '/');
                 var fileId = "/" + relativePath;
                 
-                if (isCue)
+                if (provider != null)
                 {
-                    _logger.LogInformation("Found CUE file, indexing as directory: {FileName}", file.Name);
+                    _logger.LogInformation("Found specialized file, indexing as directory: {FileName}", file.Name);
                     var doc = new Document
                     {
                         new StringField("id", fileId, Field.Store.YES),
                         new StringField("parent", currentId, Field.Store.YES),
                         new StringField("isDir", "true", Field.Store.YES),
                         new StringField("title", file.Name, Field.Store.YES),
-                        new StringField("name", file.Name, Field.Store.YES),
                         new StringField("path", file.FullName, Field.Store.YES)
                     };
                     _writer.AddDocument(doc);
-                    IndexCueTracks(file.FullName, fileId);
+                    IndexVirtualTracks(file.FullName, fileId, provider);
                 }
                 else
                 {
+                    var player = _playbackPlugins.FirstOrDefault(p => p.CanHandle(ext));
+
                     var doc = new Document
                     {
                         new StringField("id", fileId, Field.Store.YES),
                         new StringField("parent", currentId, Field.Store.YES),
                         new StringField("isDir", "false", Field.Store.YES),
                         new StringField("title", file.Name, Field.Store.YES),
-                        new StringField("artist", "", Field.Store.YES),
-                        new StringField("coverArt", "", Field.Store.YES),
-                        new StringField("name", file.Name, Field.Store.YES),
-                        new StringField("path", file.FullName, Field.Store.YES)
+                        new StringField("path", file.FullName, Field.Store.YES),
+                        new StringField("mimeType", player?.GetMimeType(ext) ?? "", Field.Store.YES),
+                        new StringField("playerType", player?.GetPlayerType(ext) ?? "", Field.Store.YES)
                     };
                     _writer.AddDocument(doc);
                 }
@@ -405,6 +356,7 @@ public class LuceneService : IDisposable
 
     private volatile bool _isScanning = false;
     private readonly object _scanLock = new object();
+    private readonly HashSet<string> _scanSuppressedPaths = new(StringComparer.OrdinalIgnoreCase);
 
     public void IndexDirectory(string dirPath, string? parentId = null)
     {
@@ -419,6 +371,7 @@ public class LuceneService : IDisposable
                     return;
                 }
                 _isScanning = true;
+                _scanSuppressedPaths.Clear();
             }
 
             try
@@ -427,7 +380,6 @@ public class LuceneService : IDisposable
                 var currentId = parentId ?? "/";
                 if (parentId == null)
                 {
-                    // root directory - 螳悟・蜀阪う繝ｳ繝・ャ繧ｯ繧ｹ縺ｮ蝣ｴ蜷医・縺ｿ繧ｯ繝ｪ繧｢
                     ClearIndex();
                     var doc = new Document
                     {
@@ -435,7 +387,6 @@ public class LuceneService : IDisposable
                         new StringField("parent", "", Field.Store.YES),
                         new StringField("isDir", "true", Field.Store.YES),
                         new StringField("title", Path.GetFileName(dirPath), Field.Store.YES),
-                        new StringField("name", Path.GetFileName(dirPath), Field.Store.YES),
                         new StringField("path", "/", Field.Store.YES)
                     };
                     _writer.AddDocument(doc);
@@ -454,11 +405,9 @@ public class LuceneService : IDisposable
                             new StringField("parent", currentId, Field.Store.YES),
                             new StringField("isDir", "true", Field.Store.YES),
                             new StringField("title", subDir.Name, Field.Store.YES),
-                            new StringField("name", subDir.Name, Field.Store.YES),
                             new StringField("path", subDirId, Field.Store.YES)
                         };
                         _writer.AddDocument(doc);
-                        // 蜀榊ｸｰ逧・↓繧ｵ繝悶ョ繧｣繝ｬ繧ｯ繝医Μ繧偵う繝ｳ繝・ャ繧ｯ繧ｹ
                         IndexDirectory(subDir.FullName, subDirId);
                     }
                     else
@@ -466,44 +415,37 @@ public class LuceneService : IDisposable
                         _logger.LogDebug("Skipping directory (no music files): {SubDirName}", subDir.Name);
                     }
                 }
-                GetCueSuppressionInfo(dirPath, out var validCues, out var suppressedFiles);
-
                 foreach (var file in dirInfo.GetFiles())
                 {
                     try
                     {
-                        var isCue = file.Name.EndsWith(".cue", StringComparison.OrdinalIgnoreCase);
-                        // Check IsMusicFile OR isCue fallback
-                        if (IsMusicFile(file.FullName) || isCue)
+                        var ext = Path.GetExtension(file.FullName).ToLowerInvariant();
+                        var indexingPlugin = _indexingPlugins.FirstOrDefault(p => p.CanHandle(ext));
+                        var playbackPlugin = _playbackPlugins.FirstOrDefault(p => p.CanHandle(ext));
+
+                        if (indexingPlugin != null || playbackPlugin != null)
                         {
-                            if (suppressedFiles.Contains(file.FullName))
+                            if (IsFileSuppressed(file.FullName))
                             {
                                 _logger.LogDebug("Skipping suppressed file: {Path}", file.FullName);
                                 continue;
                             }
 
-                            if (isCue && !validCues.Contains(file.FullName))
-                            {
-                                _logger.LogDebug("Skipping invalid CUE: {Path}", file.FullName);
-                                continue;
-                            }
-
                             var fileId = $"{currentId.TrimEnd('/')}/{file.Name}";
 
-                            if (isCue)
+                            if (indexingPlugin != null)
                             {
-                                _logger.LogInformation("Indexing CUE file as directory: {FileName}", file.Name);
+                                _logger.LogInformation("Indexing specialized file as directory: {FileName}", file.Name);
                                 var doc = new Document
                                 {
                                     new StringField("id", fileId, Field.Store.YES),
                                     new StringField("parent", currentId, Field.Store.YES),
-                                    new StringField("isDir", "true", Field.Store.YES), // CUE file acts as directory
+                                    new StringField("isDir", "true", Field.Store.YES),
                                     new StringField("title", file.Name, Field.Store.YES),
-                                    new StringField("name", file.Name, Field.Store.YES),
                                     new StringField("path", file.FullName, Field.Store.YES)
                                 };
                                 _writer.AddDocument(doc);
-                                IndexCueTracks(file.FullName, fileId);
+                                IndexVirtualTracks(file.FullName, fileId, indexingPlugin);
                             }
                             else
                             {
@@ -514,10 +456,9 @@ public class LuceneService : IDisposable
                                     new StringField("parent", currentId, Field.Store.YES),
                                     new StringField("isDir", "false", Field.Store.YES),
                                     new StringField("title", file.Name, Field.Store.YES),
-                                    new StringField("artist", "", Field.Store.YES),
-                                    new StringField("coverArt", "", Field.Store.YES),
-                                    new StringField("name", file.Name, Field.Store.YES),
-                                    new StringField("path", file.FullName, Field.Store.YES)
+                                    new StringField("path", file.FullName, Field.Store.YES),
+                                    new StringField("mimeType", playbackPlugin?.GetMimeType(ext) ?? "", Field.Store.YES),
+                                    new StringField("playerType", playbackPlugin?.GetPlayerType(ext) ?? "", Field.Store.YES)
                                 };
                                 _writer.AddDocument(doc);
                             }
@@ -544,40 +485,50 @@ public class LuceneService : IDisposable
         }
     }
 
-    private void IndexCueTracks(string cueFilePath, string parentId)
+    private void IndexVirtualTracks(string filePath, string parentId, IIndexingPlugin provider)
     {
         try
         {
-            var tracks = _cueFolderService.GetVirtualTracks(cueFilePath);
-            foreach (var track in tracks)
+            var virtualFiles = provider.GetEntries(filePath);
+            var handledPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var vFile in virtualFiles)
             {
-                var virtualId = $"{parentId}/{track.TrackNumber:00}";
+                if (!string.Equals(vFile.Path, filePath, StringComparison.OrdinalIgnoreCase) && handledPaths.Add(vFile.Path))
+                {
+                    RegisterSuppressedFile(vFile.Path, filePath);
+                }
+
+                var virtualId = $"{parentId}/{vFile.IdSuffix}";
                 var doc = new Document
                 {
                     new StringField("id", virtualId, Field.Store.YES),
                     new StringField("parent", parentId, Field.Store.YES),
-                    new StringField("isDir", "false", Field.Store.YES),
-                    new StringField("title", track.Title, Field.Store.YES),
-                    new StringField("artist", track.Artist, Field.Store.YES),
-                    new StringField("coverArt", "", Field.Store.YES),
-                    new StringField("name", track.VirtualFileName, Field.Store.YES),
-                    new StringField("path", track.SourceAudioPath, Field.Store.YES),
-                    new StringField("isCueTrack", "true", Field.Store.YES),
-                    new DoubleField("cueStart", track.StartTime.TotalSeconds, Field.Store.YES),
-                    new DoubleField("cueDuration", track.Duration?.TotalSeconds ?? 0, Field.Store.YES)
+                    new StringField("isDir", vFile.IsDir ? "true" : "false", Field.Store.YES),
+                    new StringField("title", vFile.Title, Field.Store.YES),
+                    new StringField("path", vFile.Path, Field.Store.YES)
                 };
+
+                if (vFile is MediaFile mediaFile)
+                {
+                    if (mediaFile.StartTime.HasValue) doc.Add(new DoubleField("startTime", mediaFile.StartTime.Value, Field.Store.YES));
+                    if (mediaFile.Duration.HasValue) doc.Add(new DoubleField("duration", mediaFile.Duration.Value, Field.Store.YES));
+                    if (!string.IsNullOrEmpty(mediaFile.MimeType)) doc.Add(new StringField("mimeType", mediaFile.MimeType, Field.Store.YES));
+                    if (!string.IsNullOrEmpty(mediaFile.PlayerType)) doc.Add(new StringField("playerType", mediaFile.PlayerType, Field.Store.YES));
+                }
+
                 _writer.AddDocument(doc);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to index CUE tracks: {Path}", cueFilePath);
+            _logger.LogError(ex, "Failed to index virtual tracks for: {Path}", filePath);
         }
     }
 
     // ParseCue method removed (moved to CueService)
 
-    public Dictionary<string, string>? GetDocumentById(string id)
+    public MediaItem? GetDocumentById(string id)
     {
         try
         {
@@ -588,12 +539,7 @@ public class LuceneService : IDisposable
             if (hits.Length == 0) return null;
 
             var doc = searcher.Doc(hits[0].Doc);
-            var dict = new Dictionary<string, string>();
-            foreach (var field in doc.Fields)
-            {
-                dict[field.Name] = field.GetStringValue();
-            }
-            return dict;
+            return DocumentToItem(doc);
         }
         catch (Exception ex)
         {
@@ -602,7 +548,52 @@ public class LuceneService : IDisposable
         }
     }
 
-    public List<Dictionary<string, string>> GetChildren(string parentId)
+    private MediaItem DocumentToItem(Document doc)
+    {
+        var isDir = doc.Get("isDir") == "true";
+        var id = doc.Get("id") ?? "";
+        var parent = doc.Get("parent") ?? "";
+        var title = doc.Get("title") ?? "";
+        var path = doc.Get("path") ?? "";
+        var idSuffix = doc.Get("idSuffix") ?? "";
+
+        if (isDir)
+        {
+            return new MediaFolder
+            {
+                Id = id,
+                Parent = parent,
+                Title = title,
+                Path = path,
+                IdSuffix = idSuffix
+            };
+        }
+
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        var playerTypeFromIndex = doc.Get("playerType") ?? "";
+
+        // Prefer extension-based lookup, fallback to playerType for backwards compatibility if needed
+        var player = _playbackPlugins.FirstOrDefault(p => p.CanHandle(ext));
+        
+        if (player == null && !string.IsNullOrEmpty(playerTypeFromIndex))
+        {
+            player = _playbackPlugins.FirstOrDefault(p => p.GetPlayerType("") == playerTypeFromIndex);
+        }
+
+        return new MediaFile
+        {
+            Id = id,
+            Parent = parent,
+            Title = title,
+            Path = path,
+            IdSuffix = idSuffix,
+            StartTime = doc.GetField("startTime")?.GetDoubleValue(),
+            Duration = doc.GetField("duration")?.GetDoubleValue(),
+            Player = player ?? throw new Exception($"Playable plugin is missing for {path} (ext: {ext})")
+        };
+    }
+
+    public List<MediaItem> GetChildren(string parentId)
     {
         try
         {
@@ -610,37 +601,26 @@ public class LuceneService : IDisposable
             var searcher = new IndexSearcher(reader);
             var query = new TermQuery(new Term("parent", parentId));
             var hits = searcher.Search(query, 1000).ScoreDocs;
-            var result = new List<Dictionary<string, string>>();
+            var result = new List<MediaItem>();
         foreach (var hit in hits)
         {
             var doc = searcher.Doc(hit.Doc);
-            var dict = new Dictionary<string, string>();
-            foreach (var field in doc.Fields)
-            {
-                dict[field.Name] = field.GetStringValue();
-            }
-            result.Add(dict);
+            result.Add(DocumentToItem(doc));
         }
         
         // Sort results by filename: directories first, then files, both sorted in natural order
         return result.OrderBy(item => 
         {
-            var isDir = item.ContainsKey("isDir") && item["isDir"] == "true";
-            var name = item.ContainsKey("name") ? item["name"] : "";
             // Directories come first (0), then files (1)
-            var prefix = isDir ? "0" : "1";
+            var prefix = item.IsDir ? "0" : "1";
             return prefix;
-        }).ThenBy(item => 
-        {
-            var name = item.ContainsKey("name") ? item["name"] : "";
-            return name;
-        }, new NaturalStringComparer()).ToList();
+        }).ThenBy(item =>  item.Title, new NaturalStringComparer()).ToList();
         }
         catch (IndexNotFoundException)
         {
             // Index doesn't exist yet, return empty list
             _logger.LogDebug("Index not found, returning empty result");
-            return new List<Dictionary<string, string>>();
+            return new List<MediaItem>();
         }
     }
 
@@ -652,7 +632,7 @@ public class LuceneService : IDisposable
     }
 }
 
-public class NaturalStringComparer : IComparer<string>
+file class NaturalStringComparer : IComparer<string>
 {
     public int Compare(string? x, string? y)
     {

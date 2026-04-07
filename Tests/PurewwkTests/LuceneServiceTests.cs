@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Purewwk.Services;
+using Purewwk.Plugin.Abstractions;
 using Xunit;
 using Xunit.Abstractions;
 

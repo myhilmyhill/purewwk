@@ -7,7 +7,7 @@ using Purewwk.Plugin.Abstractions;
 
 namespace Purewwk.Plugins.Fluidsynth;
 
-public class FluidsynthPlaybackPlugin : IPlaybackPlugin
+public class FluidsynthPlaybackPlugin : IPlayablePlugin
 {
     private readonly FluidsynthService _fluidsynthService;
     private readonly ILogger<FluidsynthPlaybackPlugin> _logger;
@@ -27,36 +27,38 @@ public class FluidsynthPlaybackPlugin : IPlaybackPlugin
         return SupportedExtensions.Contains(extension.ToLowerInvariant());
     }
 
-    public async Task<IActionResult> HandlePlaybackAsync(MediaFileMetadata metadata, HttpContext context)
+    public async Task<PlaybackResponse> HandlePlaybackAsync(MediaItem item, Dictionary<string, string> queryParams)
     {
         int bitRate = 128;
-        if (context.Request.Query.TryGetValue("bitRate", out var brStr))
+        if (queryParams.TryGetValue("bitRate", out var brStr))
         {
             int.TryParse(brStr, out bitRate);
         }
 
         try
         {
-            var playlist = await _fluidsynthService.GenerateHlsPlaylist(metadata, new[] { bitRate });
+            var playlist = await _fluidsynthService.GenerateHlsPlaylist(item, new[] { bitRate });
             
-            context.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
-            context.Response.Headers["Pragma"] = "no-cache";
-            context.Response.Headers["Expires"] = "0";
-            
-            return new ContentResult
+            return new PlaybackResponse
             {
                 Content = playlist,
-                ContentType = "application/vnd.apple.mpegurl"
+                ContentType = "application/vnd.apple.mpegurl",
+                Headers = new Dictionary<string, string>
+                {
+                    { "Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate" },
+                    { "Pragma", "no-cache" },
+                    { "Expires", "0" }
+                }
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Fluidsynth Plugin error: {Message}", ex.Message);
-            return new ObjectResult(ex.Message) { StatusCode = 500 };
+            _logger.LogError(ex, "Fluidsynth Plugin error");
+            throw;
         }
     }
 
-    public string GetPlayerType(string extension) => "hls";
+    public string GetPlayerType(string extension) => "fluidsynth";
 
     public string GetMimeType(string extension) => "audio/midi";
 }
@@ -66,6 +68,9 @@ public class FluidsynthPluginInitializer : IPluginInitializer
     public void RegisterServices(IServiceCollection services, IConfiguration configuration)
     {
         services.AddSingleton<FluidsynthService>();
-        services.AddSingleton<IPlaybackPlugin, FluidsynthPlaybackPlugin>();
+        services.AddSingleton<IPlayablePlugin, FluidsynthPlaybackPlugin>();
     }
 }
+
+
+

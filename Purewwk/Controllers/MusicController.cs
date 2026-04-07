@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Purewwk.Models;
 using Purewwk.Services;
+using Purewwk.Plugin.Abstractions;
 
 namespace Purewwk.Controllers;
 
@@ -13,11 +14,11 @@ namespace Purewwk.Controllers;
 public class MusicController : ControllerBase
 {
     private readonly ILogger<MusicController> _logger;
-    private readonly LuceneService _luceneService;
+    private readonly ILuceneService _luceneService;
     private readonly PluginManager _pluginManager;
     private readonly IConfiguration _configuration;
 
-    public MusicController(ILogger<MusicController> logger, LuceneService luceneService, PluginManager pluginManager, IConfiguration configuration)
+    public MusicController(ILogger<MusicController> logger, ILuceneService luceneService, PluginManager pluginManager, IConfiguration configuration)
     {
         _logger = logger;
         _luceneService = luceneService;
@@ -31,11 +32,11 @@ public class MusicController : ControllerBase
         var children = _luceneService.GetChildren(id);
         var childList = children.Select(c => new ChildResponse
         {
-            Id = c["id"],
-            Parent = c["parent"],
-            IsDir = c["isDir"] == "true",
-            Title = c["title"],
-            Path = c["path"]
+            Id = c.Id,
+            Parent = c.Parent,
+            IsDir = c.IsDir,
+            Title = c.Title,
+            Path = c.Path
         }).ToList();
         var dirResp = new DirectoryResponse
         {
@@ -84,22 +85,11 @@ public class MusicController : ControllerBase
             var fileDoc = _luceneService.GetDocumentById(id);
             if (fileDoc == null) return NotFound();
 
-            var extension = Path.GetExtension(fileDoc["path"]).ToLowerInvariant();
-            var plugin = _pluginManager.GetPluginForExtension(extension);
+            if (fileDoc is not MediaFile playable) return BadRequest("Item is not playable");
 
-            if (plugin == null)
-            {
-                return BadRequest($"No plugin found for extension {extension}");
-            }
-
-            var metadata = new Purewwk.Plugin.Abstractions.MediaFileMetadata
-            {
-                Id = id,
-                Path = fileDoc["path"],
-                Attributes = fileDoc
-            };
-
-            return await plugin.HandlePlaybackAsync(metadata, HttpContext);
+            var queryMap = HttpContext.Request.Query.ToDictionary(k => k.Key, v => v.Value.ToString());
+            var response = await playable.PlayAsync(queryMap);
+            return ToActionResult(response);
         }
         catch (Exception ex)
         {
@@ -114,16 +104,9 @@ public class MusicController : ControllerBase
         var fileDoc = _luceneService.GetDocumentById(id);
         if (fileDoc == null) return NotFound();
 
-        var extension = Path.GetExtension(fileDoc["path"]).ToLowerInvariant();
-        var plugin = _pluginManager.GetPluginForExtension(extension);
+        if (fileDoc is not MediaFile playable) return BadRequest("Item is not playable");
 
-        if (plugin == null) return NotFound("No plugin for this extension");
-
-        return Ok(new
-        {
-            PlayerType = plugin.GetPlayerType(extension),
-            // Plugin could also return more info here
-        });
+        return Ok(new { playerType = playable.PlayerType });
     }
 
     [HttpGet("download.view")]
@@ -135,13 +118,13 @@ public class MusicController : ControllerBase
 
             var fileDoc = _luceneService.GetDocumentById(id);
 
-            if (fileDoc == null || fileDoc["isDir"] == "true")
+            if (fileDoc == null || fileDoc.IsDir)
             {
                 _logger.LogWarning("File not found with id: {Id}", id);
                 return NotFound($"Media file not found for id: {id}");
             }
 
-            var fullPath = fileDoc["path"];
+            var fullPath = fileDoc.Path;
 
             if (!System.IO.File.Exists(fullPath))
             {
@@ -184,7 +167,7 @@ public class MusicController : ControllerBase
 
             if (string.IsNullOrWhiteSpace(key)) return NotFound();
 
-            // 正規化 & チE��レクトリ逸脱防止
+            // 雎・ｽ｣髫穂ｸ槫密 & 郢昴・縺・ｹ晢ｽｬ郢ｧ・ｯ郢晏現ﾎ憺ｨｾ・ｸ髢ｼ・ｱ鬮ｦ・ｲ雎・ｽ｢
             var fullBase = Path.GetFullPath(hlsSegmentsDir);
             var fullPath = Path.GetFullPath($"{hlsSegmentsDir}{key}");
             if (!fullPath.StartsWith(fullBase, StringComparison.OrdinalIgnoreCase))
@@ -209,4 +192,22 @@ public class MusicController : ControllerBase
             return StatusCode(500, $"Error serving segment: {ex.Message}");
         }
     }
+
+    private IActionResult ToActionResult(PlaybackResponse response)
+    {
+        foreach (var header in response.Headers)
+        {
+            Response.Headers[header.Key] = header.Value;
+        }
+
+        if (response.Stream != null)
+        {
+            return File(response.Stream, response.ContentType);
+        }
+
+        return Content(response.Content ?? "", response.ContentType);
+    }
 }
+
+
+

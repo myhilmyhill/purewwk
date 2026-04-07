@@ -10,6 +10,8 @@ COPY --link Purewwk/Purewwk.csproj ./Purewwk/
 COPY --link PluginBase/*.csproj ./PluginBase/
 COPY --link HlsPlugin/*.csproj ./HlsPlugin/
 COPY --link FluidsynthPlugin/*.csproj ./FluidsynthPlugin/
+COPY --link CuePlugin/*.csproj ./CuePlugin/
+COPY --link FileWatcherPlugin/*.csproj ./FileWatcherPlugin/
 RUN dotnet restore purewwk.sln -a $TARGETARCH
 
 # Copy source code
@@ -22,6 +24,8 @@ RUN dotnet publish Purewwk/Purewwk.csproj -a $TARGETARCH --no-restore -o /app
 # Publish HlsPlugin to /app/plugins/
 RUN dotnet publish HlsPlugin/HlsPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
 RUN dotnet publish FluidsynthPlugin/FluidsynthPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
+RUN dotnet publish CuePlugin/CuePlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
+RUN dotnet publish FileWatcherPlugin/FileWatcherPlugin.csproj -a $TARGETARCH --no-restore -o /app/plugins/
 
 
 # Runtime stage

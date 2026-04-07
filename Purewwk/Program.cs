@@ -1,4 +1,4 @@
-
+using Purewwk.Plugin.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,18 +8,19 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpLogging(logging =>
+{
+    logging.LoggingFields = Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.RequestMethod |
+                            Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.RequestPath |
+                            Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.RequestQuery |
+                            Microsoft.AspNetCore.HttpLogging.HttpLoggingFields.ResponseStatusCode;
+});
 
 builder.Services.AddSingleton<IFileSystem, RealFileSystem>();
-builder.Services.AddSingleton<LuceneService>();
-builder.Services.AddHostedService<FileWatcherService>();
-builder.Services.AddSingleton<CueService>();
-builder.Services.AddSingleton<CueFolderService>();
+builder.Services.AddSingleton<ILuceneService, LuceneService>();
 
-// Load Plugins
 PluginManager.LoadPlugins(builder.Services, builder.Configuration);
 builder.Services.AddSingleton<PluginManager>();
-
-
 
 var musicDir = builder.Configuration["MusicDirectory"];
 
@@ -30,13 +31,12 @@ if (string.IsNullOrEmpty(musicDir))
 
 var app = builder.Build();
 
-// Initialize Lucene index
-var luceneService = app.Services.GetRequiredService<LuceneService>();
+var luceneService = app.Services.GetRequiredService<ILuceneService>();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
 _ = Task.Run(() =>
 {
-        if (Directory.Exists(musicDir))
+    if (Directory.Exists(musicDir))
     {
         logger.LogInformation("Starting library scan...");
         luceneService.IndexDirectory(musicDir);
@@ -47,25 +47,14 @@ _ = Task.Run(() =>
 
 
 
-if (app.Environment.IsDevelopment())
-{
-    app.Use(async (context, next) =>
-    {
-        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-        logger.LogInformation("Incoming Request: {Method} {Path}{QueryString}", 
-            context.Request.Method, 
-            context.Request.Path, 
-            context.Request.QueryString);
-            
-        await next();
-        
-        logger.LogInformation("Response: {StatusCode}", context.Response.StatusCode);
-    });
-}
+app.UseHttpLogging();
 
+app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapControllers();
-app.MapGet("/", () => Results.Ok());
 
 app.Run();
+
+
+

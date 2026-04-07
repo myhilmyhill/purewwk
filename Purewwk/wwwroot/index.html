@@ -235,7 +235,7 @@
                 }
                 const info = await infoResp.json();
                 
-                if (info.playerType === 'hls') {
+                if (info.playerType === 'hls' || info.playerType === 'fluidsynth') {
                     playHls(id, title);
                 } else {
                     // Fallback or other player types

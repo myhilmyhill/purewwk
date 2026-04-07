@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Microsoft.Extensions.Logging;
+using Purewwk.Plugin.Abstractions;
 
-namespace Purewwk.Services;
+namespace Purewwk.Plugins.Cue;
 
 public class CueFolderService(
     ILogger<CueFolderService> _logger,
-    CueService _cueService)
+    ICueService _cueService) : ICueFolderService
 {
     /// <summary>
     /// Returns virtual tracks for a CUE file as directory entries.
@@ -62,13 +63,5 @@ public class CueFolderService(
     }
 }
 
-public class CueTrackInfo
-{
-    public int TrackNumber { get; set; }
-    public string Title { get; set; } = "";
-    public string Artist { get; set; } = "";
-    public string VirtualFileName { get; set; } = "";
-    public string SourceAudioPath { get; set; } = "";
-    public TimeSpan StartTime { get; set; }
-    public TimeSpan? Duration { get; set; }
-}
+
+

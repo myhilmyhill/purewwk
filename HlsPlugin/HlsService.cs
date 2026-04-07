@@ -28,9 +28,15 @@ public class HlsService
         _cacheEnabled = configuration.GetValue<bool>("HlsCache:Enabled", true);
     }
 
-    public async Task<string> GenerateHlsPlaylist(MediaFileMetadata metadata, int[] bitRates, string? audioTrack)
+    public async Task<string> GenerateHlsPlaylist(MediaItem item, int[] bitRates, string? audioTrack)
     {
-        var id = metadata.Id;
+        var id = item.Id;
+        var fullPath = item.Path;
+        var fileInfo = item as MediaFile;
+        var isCueTrack = fileInfo?.StartTime.HasValue == true;
+        var cueStart = fileInfo?.StartTime ?? 0;
+        var cueDuration = fileInfo?.Duration ?? 0;
+
         var variantKey = BuildVariantKey(bitRates, audioTrack);
         var key = $"{id}/{variantKey}";
         
@@ -38,7 +44,7 @@ public class HlsService
         var cacheDir = Path.Combine(workingDir, $"hls_segments{key}");
         var playlistPath = Path.Combine(cacheDir, "playlist.m3u8");
         
-        // Calculate Base URL components here to ensure availability for both cache hit and new generation
+        // Calculate Base URL components
         var baseUrl = GetBaseUrl();
         var encodedSuffix = Uri.EscapeDataString(key + "/");
         var segmentBaseUrl = $"{baseUrl}{encodedSuffix}";
@@ -65,36 +71,19 @@ public class HlsService
 
         if (startNewProcess)
         {
-            // 繧ｭ繝｣繝・す繝･繝偵ャ繝域凾縺ｮ螳悟・諤ｧ繝√ぉ繝・け
+            // If cache is enabled, check for existing playlist
             if (_cacheEnabled)
             {
                 var cachedEntry = await _cacheStorage.GetAsync(key);
-                // GetAsync returns null if incomplete, so if we get something, it's the full final playlist.
                 if (cachedEntry != null)
                 {
                     _logger.LogDebug("Found complete cached HLS playlist for key: {key}", key);
-                    // Critical Fix: Inject absolute URLs into cached content as the file on disk has relative paths
                     return cachedEntry.Content.Replace("segment_", $"{segmentBaseUrl}segment_");
                 }
             }
 
             // Create directory
             Directory.CreateDirectory(cacheDir);
-            _logger.LogDebug("HLS cache directory created: {CacheDir}", cacheDir);
-
-            var fullPath = metadata.Path;
-
-            // Check for CUE track metadata
-            bool isCueTrack = metadata.Attributes.ContainsKey("isCueTrack") && metadata.Attributes["isCueTrack"] == "true";
-            double cueStart = 0;
-            double cueDuration = 0;
-
-            if (isCueTrack)
-            {
-                if (metadata.Attributes.ContainsKey("cueStart")) double.TryParse(metadata.Attributes["cueStart"], out cueStart);
-                if (metadata.Attributes.ContainsKey("cueDuration")) double.TryParse(metadata.Attributes["cueDuration"], out cueDuration);
-                _logger.LogDebug("Detected CUE track. Source: {Source}, Start: {Start}, Duration: {Duration}", fullPath, cueStart, cueDuration);
-            }
 
             if (!File.Exists(fullPath))
             {
@@ -117,19 +106,16 @@ public class HlsService
             }
 
             var inputArgs = isCueTrack ? $"{seekArgs} -i \"{fullPath}\"" : $"-i \"{fullPath}\"";
-            // Explicitly set start_number to 0 to ensure consistency
-        var commonHlsArgs = $"-f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\"";
+            var commonHlsArgs = $"-f hls -hls_time 3 -hls_list_size 0 -start_number 0 -hls_segment_filename \"{cacheDir}/segment_%03d.ts\"";
 
             if (bitRates.Length > 0)
             {
                 var bitRate = bitRates[0];
                 ffmpegArgs = $"-y -v error {inputArgs} -vn -af loudnorm -c:a aac -b:a {bitRate}k {commonHlsArgs} \"{playlistPath}\"";
-                _logger.LogDebug("Using single bitrate: {BitRate}k", bitRate);
             }
             else
             {
                 ffmpegArgs = $"-y -v error {inputArgs} -vn -af loudnorm -c:a aac {commonHlsArgs} \"{playlistPath}\"";
-                _logger.LogDebug("Using default bitrate");
             }
 
             _logger.LogDebug("FFmpeg HLS command: ffmpeg {FfmpegArgs}", ffmpegArgs);
@@ -140,7 +126,6 @@ public class HlsService
             
             var ffmpegTask = RunFfmpegInBackground(ffmpegArgs, cacheDir, cts.Token);
             
-            // Continue FFmpeg processing in background (don't await)
             _ = Task.Run(async () =>
             {
                 try
@@ -149,14 +134,9 @@ public class HlsService
                     _logger.LogInformation("FFmpeg background conversion completed");
                     UnregisterActiveProcess(id, cts);
                     
-                    // Update cache completion status (timestamp update)
                     if (_cacheEnabled && File.Exists(playlistPath))
                     {
                         var finalPlaylistContent = await File.ReadAllTextAsync(playlistPath);
-                        // Note: We don't need to inject URLs here because SetAsync ignores the content 
-                        // and GetAsync always reads from disk (which is relative).
-                        // The injection happens only when serving the content (in GenerateHlsPlaylist).
-                        
                         var finalCacheEntry = new HlsCacheEntry
                         {
                             Content = finalPlaylistContent,
@@ -164,30 +144,20 @@ public class HlsService
                             CreatedAt = DateTime.Now,
                             LastAccessed = DateTime.Now
                         };
-
                         await _cacheStorage.SetAsync(key, finalCacheEntry);
-                        _logger.LogDebug("Updated final HLS cache timestamp after FFmpeg completion");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "FFmpeg background conversion failed: {Message}", ex.Message);
-                    // Ensure cleanup on error
+                    _logger.LogError(ex, "FFmpeg background conversion failed");
                     UnregisterActiveProcess(id, cts);
                 }
             });
         }
         
-        // Wait for first segment to be created (or check if it exists if reusing process)
         await WaitForFirstSegment(id, cacheDir, playlistPath);
-
-        // Read playlist content
         var playlistContent = await File.ReadAllTextAsync(playlistPath);
-        
-        // Inject absolute URLs manually
-        playlistContent = playlistContent.Replace("segment_", $"{segmentBaseUrl}segment_");
-
-        return playlistContent;
+        return playlistContent.Replace("segment_", $"{segmentBaseUrl}segment_");
     }
 
     private string BuildVariantKey(int[] bitRates, string? audioTrack)
@@ -212,7 +182,7 @@ public class HlsService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error in HLS cache cleanup: {Message}", ex.Message);
+                    _logger.LogError(ex, "Error in HLS cache cleanup");
                     await Task.Delay(TimeSpan.FromMinutes(10));
                 }
             }
@@ -224,37 +194,21 @@ public class HlsService
     private string GetBaseUrl()
     {
         var httpContext = _httpContextAccessor.HttpContext;
-        if (httpContext != null)
-        {
-            var request = httpContext.Request;
-            var pathBase = request.PathBase.Value; // for apps deployed in subdirectories
-
-            // Use root-relative path to avoid scheme/host issues
-            // This ensures hls.js requests /hls?key=... relative to the current domain
-            var baseUrl = $"{pathBase}/hls?key=";
-            _logger.LogDebug("Auto-detected base URL (root-relative): {BaseUrl}", baseUrl);
-            return baseUrl;
-        }
-        else
-        {
-            throw new Exception("Unable to determine base URL - HttpContext is null");
-        }
+        if (httpContext == null) throw new Exception("HttpContext is null");
+        
+        var request = httpContext.Request;
+        var pathBase = request.PathBase.Value;
+        return $"{pathBase}/hls?key=";
     }
-
-
 
     private async Task RunFfmpegInBackground(string args, string cacheDir, CancellationToken cancellationToken)
     {
         Process? process = null;
         try
         {
-            // Get FFmpeg path from environment variable or configuration, fallback to "ffmpeg"
             var ffmpegPath = Environment.GetEnvironmentVariable("FFMPEG_PATH")
                 ?? _configuration["FFmpeg:Path"]
                 ?? "ffmpeg";
-
-            _logger.LogDebug("Starting FFmpeg in background from path: {FfmpegPath}", ffmpegPath);
-            _logger.LogDebug("FFmpeg args: {Args}", args);
 
             var startInfo = new ProcessStartInfo
             {
@@ -267,27 +221,15 @@ public class HlsService
             };
 
             process = new Process { StartInfo = startInfo };
-            
-            // Handle output to prevent deadlocks (buffer overflow)
-            process.OutputDataReceived += (sender, e) => 
-            {
-                if (!string.IsNullOrEmpty(e.Data))
-                {
-                    _logger.LogTrace("FFmpeg Output: {Data}", e.Data);
-                }
-            };
+            process.OutputDataReceived += (sender, e) => { if (!string.IsNullOrEmpty(e.Data)) _logger.LogTrace("FFmpeg Output: {Data}", e.Data); };
             
             var errorBuilder = new System.Text.StringBuilder();
             process.ErrorDataReceived += (sender, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
-                    _logger.LogTrace("FFmpeg Output: {Data}", e.Data);
-                    lock(errorBuilder)
-                    {
-                        if (errorBuilder.Length < 4096) // Limit logging size
-                            errorBuilder.AppendLine(e.Data);
-                    }
+                    _logger.LogTrace("FFmpeg error: {Data}", e.Data);
+                    lock(errorBuilder) { if (errorBuilder.Length < 4096) errorBuilder.AppendLine(e.Data); }
                 }
             };
 
@@ -295,52 +237,30 @@ public class HlsService
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            // Much longer timeout for background processing (10 minutes)
-            var timeout = TimeSpan.FromMinutes(10);
-            using (var timeoutCts = new CancellationTokenSource(timeout))
-            using (var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token))
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+            
+            try
             {
-                try
-                {
-                    await process.WaitForExitAsync(combinedCts.Token);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    _logger.LogInformation("FFmpeg background process was cancelled by user request, killing...");
-                    if (!process.HasExited)
-                    {
-                         try { process.Kill(); } catch { }
-                    }
-                    return;
-                }
-                catch (OperationCanceledException)
-                {
-                    _logger.LogWarning("FFmpeg background process timed out, killing...");
-                    if (!process.HasExited)
-                    {
-                        try { process.Kill(); } catch { }
-                    }
-                    throw new Exception("FFmpeg background process timed out after 10 minutes");
-                }
+                await process.WaitForExitAsync(combinedCts.Token);
             }
-
-            _logger.LogDebug("FFmpeg background process finished with exit code: {ExitCode}", process.ExitCode);
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited) process.Kill();
+                if (cancellationToken.IsCancellationRequested) return;
+                throw new Exception("FFmpeg timeout");
+            }
 
             if (process.ExitCode != 0)
             {
                 string errorLog;
                 lock(errorBuilder) { errorLog = errorBuilder.ToString(); }
-                
-                _logger.LogError("FFmpeg background error (exit code {ExitCode}): {Error}", process.ExitCode, errorLog);
+                _logger.LogError("FFmpeg error {ExitCode}: {Log}", process.ExitCode, errorLog);
             }
-        }
-        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
-        {
-            _logger.LogError("FFmpeg is not installed or not found in PATH for background processing");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error running FFmpeg in background: {Message}", ex.Message);
+            _logger.LogError(ex, "FFmpeg error");
         }
         finally
         {
@@ -350,136 +270,52 @@ public class HlsService
 
     private async Task WaitForFirstSegment(string id, string cacheDir, string playlistPath)
     {
-        _logger.LogDebug("Waiting for HLS segments in directory: {CacheDir}", cacheDir);
-        
-        // Wait for at least 2 segments to ensure smooth transition from first segment
-        // This prevents the "stall at 3 seconds" issue by ensuring the player knows about the next segment immediately.
         const int MinSegments = 2;
-        
         var timeout = TimeSpan.FromSeconds(30);
         var startTime = DateTime.Now;
 
         while (DateTime.Now - startTime < timeout)
         {
-            // Check if playlist exists and has content
             if (File.Exists(playlistPath))
             {
                 try
                 {
-                    var playlistContent = await File.ReadAllTextAsync(playlistPath);
-                    var lines = playlistContent.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    
-                    // Count valid segments
+                    var content = await File.ReadAllTextAsync(playlistPath);
+                    var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                     var segments = lines.Where(l => l.EndsWith(".ts") && !l.StartsWith("#")).ToList();
                     var isComplete = lines.Any(l => l.Contains("#EXT-X-ENDLIST"));
                     
-                    // Success condition: Enough segments OR Stream finished (short file)
                     if (segments.Count >= MinSegments || (segments.Count > 0 && isComplete))
                     {
-                        // Check if the latest required segment file exists
-                        var lastSegment = segments.Last();
-                        var segmentPath = Path.Combine(cacheDir, lastSegment);
-                        
-                        // Basic check to ensure FS has synced and file is written
-                        if (File.Exists(segmentPath) && new FileInfo(segmentPath).Length > 0)
-                        {
-                            _logger.LogDebug("Ready to serve: {Count} segments found. Last: {Last}", segments.Count, lastSegment);
-                            return;
-                        }
+                        var segmentPath = Path.Combine(cacheDir, segments.Last());
+                        if (File.Exists(segmentPath) && new FileInfo(segmentPath).Length > 0) return;
                     }
-                    
-                    // Fallback: If we have at least 1 segment and have waited > 2 seconds, just go to avoid long start delay.
-                    // Ideally audio transcoding is fast enough to hit MinSegments in < 1s.
-                    if (segments.Count > 0 && (DateTime.Now - startTime).TotalSeconds > 2.0)
-                    {
-                         _logger.LogDebug("Timeout waiting for {0} segments, proceeding with {1} to avoid start delay", MinSegments, segments.Count);
-                         return;
-                    }
+
+                    if (segments.Count > 0 && (DateTime.Now - startTime).TotalSeconds > 2.0) return;
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Error reading playlist while waiting: {Message}", ex.Message);
-                }
+                catch { }
             }
 
-            // Validating if the process is still running
-            bool isProcessActive;
-            lock (_processLock)
-            {
-                isProcessActive = _activeProcesses.ContainsKey(id);
-            }
+            bool active;
+            lock(_processLock) { active = _activeProcesses.ContainsKey(id); }
+            if (!active) throw new Exception("FFmpeg exited early");
 
-            if (!isProcessActive)
-            {
-                 // Process died/finished. Check one last time.
-                 if (File.Exists(playlistPath))
-                 {
-                    var content = await File.ReadAllTextAsync(playlistPath);
-                    var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    var segmentFile = lines.FirstOrDefault(l => l.EndsWith(".ts") && !l.StartsWith("#"));
-                    
-                    if (!string.IsNullOrEmpty(segmentFile))
-                    {
-                        var segmentPath = Path.Combine(cacheDir, segmentFile);
-                        if (File.Exists(segmentPath) && new FileInfo(segmentPath).Length > 0)
-                        {
-                            return; 
-                        }
-                    }
-                 }
-                 // If process is dead and no segments, it failed.
-                 throw new Exception($"FFmpeg process for {id} exited without creating valid segments.");
-            }
-
-            // Poll frequently (200ms) for responsiveness
             await Task.Delay(200);
         }
-
-        throw new Exception("Timeout waiting for HLS segments to be created");
-    }
-
-    private void CancelExistingProcess(string id)
-    {
-        lock (_processLock)
-        {
-            if (_activeProcesses.TryGetValue(id, out var active))
-            {
-                _logger.LogInformation("Cancelling existing FFmpeg process for id: {Id}", id);
-                active.Cts.Cancel();
-                _activeProcesses.Remove(id);
-            }
-        }
+        throw new Exception("HLS timeout");
     }
 
     private void RegisterActiveProcess(string id, CancellationTokenSource cts, string variantKey)
     {
         lock (_processLock)
         {
-             // Cleanup old processes if limit exceeded (MAX_CONCURRENT_PROCESSES = 4)
-             // This prevents CPU overload when rapidly switching tracks
             if (_activeProcesses.Count >= 4)
             {
-                // Ensure we don't count the one we are about to add (though it's not in yet)
-                // Find oldest process to cancel
-                var oldest = _activeProcesses
-                    .OrderBy(kvp => kvp.Value.StartTime)
-                    .FirstOrDefault();
-                
-                if (!object.Equals(oldest, default(KeyValuePair<string, (CancellationTokenSource, string, DateTime)>)))
-                {
-                    _logger.LogInformation("Max concurrent processes limit reached. Cancelling oldest process: {Id}", oldest.Key);
-                    try 
-                    {
-                        oldest.Value.Cts.Cancel(); 
-                    } 
-                    catch (ObjectDisposedException) { /* Handle race condition */ }
-                    
-                    _activeProcesses.Remove(oldest.Key);
-                }
+                var oldest = _activeProcesses.OrderBy(kvp => kvp.Value.StartTime).First();
+                oldest.Value.Cts.Cancel();
+                _activeProcesses.Remove(oldest.Key);
             }
-
             _activeProcesses[id] = (cts, variantKey, DateTime.Now);
-            _logger.LogDebug("Registered active FFmpeg process for id: {Id}, variant: {Variant}", id, variantKey);
         }
     }
 
@@ -487,13 +323,7 @@ public class HlsService
     {
         lock (_processLock)
         {
-            if (_activeProcesses.TryGetValue(id, out var active) && active.Cts == cts)
-            {
-                if (_activeProcesses.Remove(id))
-                {
-                    _logger.LogDebug("Unregistered FFmpeg process for id: {Id}", id);
-                }
-            }
+            if (_activeProcesses.TryGetValue(id, out var active) && active.Cts == cts) _activeProcesses.Remove(id);
         }
     }
 }

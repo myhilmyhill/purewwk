@@ -4,10 +4,11 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Purewwk.Plugin.Abstractions;
 
-namespace Purewwk.Services;
+namespace Purewwk.Plugins.Cue;
 
-public class CueService(ILogger<CueService> _logger, IFileSystem _fileSystem)
+public class CueService(ILogger<CueService> _logger, IFileSystem _fileSystem) : ICueService
 {
     private readonly string[] _audioExtensions = [".mp3", ".flac", ".wav", ".ape", ".wv", ".m4a", ".tta", ".tak"];
 
@@ -156,25 +157,5 @@ public class CueService(ILogger<CueService> _logger, IFileSystem _fileSystem)
     }
 }
 
-public class CueSheet
-{
-    public string? Path { get; set; }
-    public string? Title { get; set; }
-    public string? Performer { get; set; }
-    public List<CueFile> Files { get; set; } = new();
-}
 
-public class CueFile
-{
-    public string FileName { get; set; } = "";
-    public List<CueTrack> Tracks { get; set; } = new();
-}
 
-public class CueTrack
-{
-    public int Number { get; set; }
-    public string? Title { get; set; }
-    public string? Performer { get; set; }
-    public TimeSpan StartTime { get; set; }
-    public TimeSpan? Duration { get; set; }
-}

@@ -5,10 +5,10 @@ namespace Purewwk.Services;
 
 public class PluginManager
 {
-    private readonly IEnumerable<IPlaybackPlugin> _playbackPlugins;
+    private readonly IEnumerable<IPlayablePlugin> _playbackPlugins;
     private readonly ILogger<PluginManager> _logger;
 
-    public PluginManager(ILogger<PluginManager> logger, IEnumerable<IPlaybackPlugin> playbackPlugins)
+    public PluginManager(ILogger<PluginManager> logger, IEnumerable<IPlayablePlugin> playbackPlugins)
     {
         _logger = logger;
         _playbackPlugins = playbackPlugins;
@@ -47,10 +47,17 @@ public class PluginManager
         }
     }
 
-    public IPlaybackPlugin? GetPluginForExtension(string extension)
+    public IPlayablePlugin? GetPluginForExtension(string extension)
     {
         var ext = extension.ToLowerInvariant();
-        if (!ext.StartsWith(".")) ext = "." + ext;
+        if (!string.IsNullOrEmpty(ext) && !ext.StartsWith(".")) ext = "." + ext;
         return _playbackPlugins.FirstOrDefault(p => p.CanHandle(ext));
+    }
+
+    public IPlayablePlugin? GetPluginForPlayerType(string playerType)
+    {
+        // Try to match player types. We might need to pass a dummy ext to GetPlayerType 
+        // if the plugin implementation depends on it, but usually it's static per plugin.
+        return _playbackPlugins.FirstOrDefault(p => p.GetPlayerType("") == playerType);
     }
 }

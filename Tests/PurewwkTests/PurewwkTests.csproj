@@ -22,6 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\PluginBase\PluginBase.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="..\..\Purewwk\Services\CueService.cs" Link="Services\CueService.cs" />
     <Compile Include="..\..\Purewwk\Services\CueFolderService.cs" Link="Services\CueFolderService.cs" />
     <Compile Include="..\..\Purewwk\Services\LuceneService.cs" Link="Services\LuceneService.cs" />

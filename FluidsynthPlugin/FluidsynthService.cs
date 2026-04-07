@@ -24,9 +24,9 @@ public class FluidsynthService
         _httpContextAccessor = httpContextAccessor;
     }
 
-    public async Task<string> GenerateHlsPlaylist(MediaFileMetadata metadata, int[] bitRates)
+    public async Task<string> GenerateHlsPlaylist(MediaItem item, int[] bitRates)
     {
-        var id = metadata.Id;
+        var id = item.Id;
         var variantKey = bitRates.Length > 0 ? bitRates[0].ToString() : "default";
         // Ensure id doesn't cause double slashes or path issues
         var cleanId = id.TrimStart('/');
@@ -85,7 +85,7 @@ public class FluidsynthService
                     throw new FileNotFoundException("SoundFont not found", soundFontPath);
                 }
 
-                var midiPath = metadata.Path;
+                var midiPath = item.Path;
 
                 if (!File.Exists(midiPath))
                 {
@@ -464,3 +464,6 @@ public class FluidsynthService
         }
     }
 }
+
+
+
