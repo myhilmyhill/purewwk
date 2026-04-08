@@ -2,330 +2,330 @@
 <html lang="ja">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="color-scheme" content="dark light">
-    <meta name="theme-color" content="#121212">
-    <title>HLS Player</title>
-    <link rel="stylesheet" href="index.css">
-    <link rel="stylesheet" href="transitions.css">
-    <link rel="manifest" href="manifest.json">
+  <meta charset="UTF-8">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#121212">
+  <title>HLS Player</title>
+  <link rel="stylesheet" href="index.css">
+  <link rel="stylesheet" href="transitions.css">
+  <link rel="manifest" href="manifest.json">
 </head>
 
 <body>
-    <header>
-        <button id="backBtn" onclick="goUp()">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <path d="M19 12H5" />
-                <path d="M12 19l-7-7 7-7" />
-            </svg>
-        </button>
-        <div id="fileId" class="header-title">Home</div>
-    </header>
+  <header>
+    <button id="backBtn" onclick="goUp()">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5" />
+        <path d="M12 19l-7-7 7-7" />
+      </svg>
+    </button>
+    <div id="fileId" class="header-title">Home</div>
+  </header>
 
-    <main>
-        <div id="dirList"></div>
+  <main>
+    <div id="dirList"></div>
 
-        <template id="dir-item-template">
-            <div class="list-item">
-                <div class="item-icon">
-                    <svg class="icon-dir" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#bb86fc"
-                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z">
-                        </path>
-                    </svg>
-                </div>
-                <div class="item-content">
-                    <div class="item-title"></div>
-                </div>
-            </div>
-        </template>
+    <template id="dir-item-template">
+      <div class="list-item">
+        <div class="item-icon">
+          <svg class="icon-dir" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#bb86fc" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z">
+            </path>
+          </svg>
+        </div>
+        <div class="item-content">
+          <div class="item-title"></div>
+        </div>
+      </div>
+    </template>
 
-        <template id="file-item-template">
-            <div class="list-item">
-                <div class="item-icon"></div>
-                <div class="item-content">
-                    <div class="item-title"></div>
-                </div>
-                <div class="item-status"></div>
-            </div>
-        </template>
-        <template id="icon-play">
-            <svg class="icon-play" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"></polygon>
-            </svg>
-        </template>
+    <template id="file-item-template">
+      <div class="list-item">
+        <div class="item-icon"></div>
+        <div class="item-content">
+          <div class="item-title"></div>
+        </div>
+        <div class="item-status"></div>
+      </div>
+    </template>
+    <template id="icon-play">
+      <svg class="icon-play" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+      </svg>
+    </template>
 
-        <template id="icon-file">
-            <svg class="icon-file" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 18V5l12-2v13"></path>
-                <circle cx="6" cy="18" r="3"></circle>
-                <circle cx="18" cy="16" r="3"></circle>
-            </svg>
-        </template>
+    <template id="icon-file">
+      <svg class="icon-file" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#03dac6" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 18V5l12-2v13"></path>
+        <circle cx="6" cy="18" r="3"></circle>
+        <circle cx="18" cy="16" r="3"></circle>
+      </svg>
+    </template>
 
-        <template id="icon-cached">
-            <svg class="icon-cached" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4caf50"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                <polyline points="22 4 12 14.01 9 11.01"></polyline>
-            </svg>
-        </template>
-    </main>
+    <template id="icon-cached">
+      <svg class="icon-cached" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+      </svg>
+    </template>
+  </main>
 
-    <footer>
-        <audio id="player" controls></audio>
-    </footer>
+  <footer>
+    <audio id="player" controls></audio>
+  </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script module>
-        'use strict';
-        var player = document.getElementById('player');
-        var hls = null;
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script module>
+    'use strict';
+    var player = document.getElementById('player');
+    var hls = null;
 
-        var currentParent = null;
-        var currentPlayingId = null;
+    var currentParent = null;
+    var currentPlayingId = null;
 
-        var currentDirId = '';
-        var nextDirection = '';
+    var currentDirId = '';
+    var nextDirection = '';
 
-        function getHashPath() {
-            return window.location.hash ? decodeURIComponent(window.location.hash.substring(1)) : null;
+    function getHashPath() {
+      return window.location.hash ? decodeURIComponent(window.location.hash.substring(1)) : null;
+    }
+
+    function loadSource() {
+      var id = getHashPath() || '/';
+      fetchDirectory(id);
+    }
+
+    function goUp() {
+      if (currentParent) {
+        nextDirection = 'back';
+        window.location.hash = encodeURIComponent(currentParent);
+      }
+    }
+
+    function applyTransition(updateDom) {
+      const types = [];
+      if (nextDirection) {
+        types.push(nextDirection);
+      }
+
+      const transition = document.startViewTransition({
+        update: updateDom,
+        types: types
+      });
+
+      transition.finished.finally(() => {
+        nextDirection = '';
+      });
+    }
+
+    async function fetchDirectory(id) {
+      try {
+        const response = await fetch(`/rest/getMusicDirectory.view?id=${encodeURIComponent(id)}`);
+        if (!response.ok) {
+          playHls(id);
+          return;
         }
+        const data = await response.json();
+        const subsonic = data['subsonic-response'];
 
-        function loadSource() {
-            var id = getHashPath() || '/';
-            fetchDirectory(id);
+        if (subsonic && subsonic.directory && subsonic.directory.child) {
+          if (document.startViewTransition) {
+            applyTransition(() => renderDirectory(subsonic.directory));
+          } else {
+            renderDirectory(subsonic.directory);
+          }
+        } else {
+          // Try playing as HLS if not a dir, but don't clear status immediately
+          // Attempting playback
+          if (id.endsWith('/') || !id.includes('.')) {
+            // Likely an empty directory or invalid, but do our best
+          }
+          playHls(id);
         }
+      } catch (e) {
+        console.error("Directory fetch failed", e);
+        playHls(id);
+      }
+    }
 
-        function goUp() {
-            if (currentParent) {
-                nextDirection = 'back';
-                window.location.hash = encodeURIComponent(currentParent);
+    function renderDirectory(directory) {
+      currentDirId = directory.id;
+      const list = document.getElementById('dirList');
+      list.innerHTML = '';
+      document.querySelector('main').scrollTop = 0;
+
+      updateTextBox(directory.id);
+
+      // Handle parent for Back Button
+      currentParent = directory.parent;
+      const backBtn = document.getElementById('backBtn');
+      backBtn.disabled = !currentParent;
+
+      if (directory.child) {
+        const children = Array.isArray(directory.child) ? directory.child : [directory.child];
+        const dirTemplate = document.getElementById('dir-item-template');
+        const fileTemplate = document.getElementById('file-item-template');
+
+        children.forEach(item => {
+          const clone = (item.isDir ? dirTemplate : fileTemplate).content.cloneNode(true);
+
+          clone.querySelector('.item-title').textContent = item.title || item.name;
+
+          const itemDiv = clone.querySelector('.list-item');
+          itemDiv.dataset.id = item.id;
+          itemDiv.dataset.isDir = item.isDir;
+
+          // Cache status
+          if (item.cached) {
+            const statusDiv = clone.querySelector('.item-status');
+            const cachedTemplate = document.getElementById('icon-cached');
+            statusDiv.appendChild(cachedTemplate.content.cloneNode(true));
+          }
+
+          itemDiv.onclick = (e) => {
+            e.preventDefault();
+            if (item.isDir) {
+              nextDirection = 'forward';
+              window.location.hash = encodeURIComponent(item.id);
+            } else {
+              // Pass title explicitly if available, otherwise just ID will be used
+              playFile(item.id, item.title || item.name);
             }
-        }
+          };
 
-        function applyTransition(updateDom) {
-            const types = [];
-            if (nextDirection) {
-                types.push(nextDirection);
+          list.appendChild(clone);
+        });
+
+        updateIcons();
+      }
+    }
+
+    function updateIcons() {
+      const items = document.querySelectorAll('.list-item');
+      const playTemplate = document.getElementById('icon-play');
+      const fileTemplate = document.getElementById('icon-file');
+
+      items.forEach(item => {
+        if (item.dataset.isDir === 'true') return; // Skip directories
+
+        const iconContainer = item.querySelector('.item-icon');
+        iconContainer.innerHTML = ''; // Clear existing icon
+
+        if (item.dataset.id === currentPlayingId) {
+          iconContainer.appendChild(playTemplate.content.cloneNode(true));
+        } else {
+          iconContainer.appendChild(fileTemplate.content.cloneNode(true));
+        }
+      });
+    }
+
+    async function playFile(id, title) {
+      try {
+        const infoResp = await fetch(`/rest/playback-info?id=${encodeURIComponent(id)}`);
+        if (!infoResp.ok) {
+          console.error("Failed to get playback info");
+          return;
+        }
+        const info = await infoResp.json();
+
+        if (info.playerType === 'hls' || info.playerType === 'fluidsynth') {
+          playHls(id, title);
+        } else {
+          // Fallback or other player types
+          console.warn("Unsupported player type:", info.playerType);
+        }
+      } catch (e) {
+        console.error("Playback info fetch failed", e);
+      }
+    }
+
+    function playHls(id, title) {
+      currentPlayingId = id;
+      updateIcons();
+
+      var displayTitle = title || id;
+      document.title = displayTitle;
+      var videoSrc = '/rest/hls.m3u8?id=' + encodeURIComponent(id);
+
+      if (Hls.isSupported()) {
+        if (hls) {
+          hls.destroy();
+        }
+        hls = new Hls({
+          startPosition: 0, // Force start from beginning even if Live
+          debug: false
+        });
+        hls.loadSource(videoSrc);
+        hls.attachMedia(player);
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+          player.play().then(() => {
+            updateMediaSession(displayTitle);
+          }).catch(console.error);
+        });
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.log('fatal network error encountered, try to recover');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.log('fatal media error encountered, try to recover');
+                hls.recoverMediaError();
+                break;
+              default:
+                hls.destroy();
+                break;
             }
+          }
+        });
+      } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+        player.src = videoSrc;
+        player.play().then(() => {
+          updateMediaSession(displayTitle);
+        }).catch(e => {
+          console.error("Playback failed", e);
+        });
+      }
+    }
 
-            const transition = document.startViewTransition({
-                update: updateDom,
-                types: types
-            });
+    function updateMediaSession(title) {
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: title,
+        });
+      }
+    }
 
-            transition.finished.finally(() => {
-                nextDirection = '';
-            });
-        }
+    function updateTextBox(id) {
+      var el = document.getElementById('fileId');
+      el.textContent = id;
+    }
 
-        async function fetchDirectory(id) {
-            try {
-                const response = await fetch(`/rest/getMusicDirectory.view?id=${encodeURIComponent(id)}`);
-                if (!response.ok) {
-                    playHls(id);
-                    return;
-                }
-                const data = await response.json();
-                const subsonic = data['subsonic-response'];
+    // Initial load
+    window.addEventListener('hashchange', loadSource);
+    loadSource();
 
-                if (subsonic && subsonic.directory && subsonic.directory.child) {
-                    if (document.startViewTransition) {
-                        applyTransition(() => renderDirectory(subsonic.directory));
-                    } else {
-                        renderDirectory(subsonic.directory);
-                    }
-                } else {
-                    // Try playing as HLS if not a dir, but don't clear status immediately
-                    // Attempting playback
-                    if (id.endsWith('/') || !id.includes('.')) {
-                        // Likely an empty directory or invalid, but do our best
-                    }
-                    playHls(id);
-                }
-            } catch (e) {
-                console.error("Directory fetch failed", e);
-                playHls(id);
-            }
-        }
-
-        function renderDirectory(directory) {
-            currentDirId = directory.id;
-            const list = document.getElementById('dirList');
-            list.innerHTML = '';
-            document.querySelector('main').scrollTop = 0;
-
-            updateTextBox(directory.id);
-
-            // Handle parent for Back Button
-            currentParent = directory.parent;
-            const backBtn = document.getElementById('backBtn');
-            backBtn.disabled = !currentParent;
-
-            if (directory.child) {
-                const children = Array.isArray(directory.child) ? directory.child : [directory.child];
-                const dirTemplate = document.getElementById('dir-item-template');
-                const fileTemplate = document.getElementById('file-item-template');
-
-                children.forEach(item => {
-                    const clone = (item.isDir ? dirTemplate : fileTemplate).content.cloneNode(true);
-
-                    clone.querySelector('.item-title').textContent = item.title || item.name;
-
-                    const itemDiv = clone.querySelector('.list-item');
-                    itemDiv.dataset.id = item.id;
-                    itemDiv.dataset.isDir = item.isDir;
-
-                    // Cache status
-                    if (item.cached) {
-                        const statusDiv = clone.querySelector('.item-status');
-                        const cachedTemplate = document.getElementById('icon-cached');
-                        statusDiv.appendChild(cachedTemplate.content.cloneNode(true));
-                    }
-
-                    itemDiv.onclick = (e) => {
-                        e.preventDefault();
-                        if (item.isDir) {
-                            nextDirection = 'forward';
-                            window.location.hash = encodeURIComponent(item.id);
-                        } else {
-                            // Pass title explicitly if available, otherwise just ID will be used
-                            playFile(item.id, item.title || item.name);
-                        }
-                    };
-
-                    list.appendChild(clone);
-                });
-
-                updateIcons();
-            }
-        }
-
-        function updateIcons() {
-            const items = document.querySelectorAll('.list-item');
-            const playTemplate = document.getElementById('icon-play');
-            const fileTemplate = document.getElementById('icon-file');
-
-            items.forEach(item => {
-                if (item.dataset.isDir === 'true') return; // Skip directories
-
-                const iconContainer = item.querySelector('.item-icon');
-                iconContainer.innerHTML = ''; // Clear existing icon
-
-                if (item.dataset.id === currentPlayingId) {
-                    iconContainer.appendChild(playTemplate.content.cloneNode(true));
-                } else {
-                    iconContainer.appendChild(fileTemplate.content.cloneNode(true));
-                }
-            });
-        }
-
-        async function playFile(id, title) {
-            try {
-                const infoResp = await fetch(`/rest/playback-info?id=${encodeURIComponent(id)}`);
-                if (!infoResp.ok) {
-                    console.error("Failed to get playback info");
-                    return;
-                }
-                const info = await infoResp.json();
-                
-                if (info.playerType === 'hls' || info.playerType === 'fluidsynth') {
-                    playHls(id, title);
-                } else {
-                    // Fallback or other player types
-                    console.warn("Unsupported player type:", info.playerType);
-                }
-            } catch (e) {
-                console.error("Playback info fetch failed", e);
-            }
-        }
-
-        function playHls(id, title) {
-            currentPlayingId = id;
-            updateIcons();
-
-            var displayTitle = title || id;
-            document.title = displayTitle;
-            var videoSrc = '/rest/hls.m3u8?id=' + encodeURIComponent(id);
-
-            if (Hls.isSupported()) {
-                if (hls) {
-                    hls.destroy();
-                }
-                hls = new Hls({
-                    startPosition: 0, // Force start from beginning even if Live
-                    debug: false
-                });
-                hls.loadSource(videoSrc);
-                hls.attachMedia(player);
-                hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                    player.play().then(() => {
-                        updateMediaSession(displayTitle);
-                    }).catch(console.error);
-                });
-                hls.on(Hls.Events.ERROR, function (event, data) {
-                    if (data.fatal) {
-                        switch (data.type) {
-                            case Hls.ErrorTypes.NETWORK_ERROR:
-                                console.log('fatal network error encountered, try to recover');
-                                hls.startLoad();
-                                break;
-                            case Hls.ErrorTypes.MEDIA_ERROR:
-                                console.log('fatal media error encountered, try to recover');
-                                hls.recoverMediaError();
-                                break;
-                            default:
-                                hls.destroy();
-                                break;
-                        }
-                    }
-                });
-            } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
-                player.src = videoSrc;
-                player.play().then(() => {
-                    updateMediaSession(displayTitle);
-                }).catch(e => {
-                    console.error("Playback failed", e);
-                });
-            }
-        }
-
-        function updateMediaSession(title) {
-            if ('mediaSession' in navigator) {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                    title: title,
-                });
-            }
-        }
-
-        function updateTextBox(id) {
-            var el = document.getElementById('fileId');
-            el.textContent = id;
-        }
-
-        // Initial load
-        window.addEventListener('hashchange', loadSource);
-        loadSource();
-
-        // Register Service Worker
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js')
-                    .then(registration => {
-                        console.log('ServiceWorker registration successful with scope: ', registration.scope);
-                    })
-                    .catch(error => {
-                        console.log('ServiceWorker registration failed: ', error);
-                    });
-            });
-        }
-    </script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+          .then(registration => {
+            console.log('ServiceWorker registration successful with scope: ', registration.scope);
+          })
+          .catch(error => {
+            console.log('ServiceWorker registration failed: ', error);
+          });
+      });
+    }
+  </script>
 </body>
 
 </html>
