@@ -23,7 +23,7 @@ public class CueIndexingPlugin(ICueFolderService _cueFolderService, IEnumerable<
         var result = new List<MediaItem>();
         try
         {
-            var tracks = _cueFolderService.GetVirtualTracks(path);
+            var tracks = _cueFolderService.GetVirtualTracks(path).OrderBy(t => t.TrackNumber);
             foreach (var track in tracks)
             {
                 var ext = Path.GetExtension(track.SourceAudioPath).ToLowerInvariant();
@@ -33,7 +33,7 @@ public class CueIndexingPlugin(ICueFolderService _cueFolderService, IEnumerable<
                 {
                     Id = track.TrackNumber.ToString("00"),
                     Parent = string.Empty,
-                    Title = track.Title,
+                    Title = $"{track.TrackNumber:00} - {track.Title}",
                     Path = track.SourceAudioPath,
                     StartTime = track.StartTime.TotalSeconds,
                     Duration = track.Duration?.TotalSeconds,
